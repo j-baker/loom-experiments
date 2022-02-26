@@ -1,0 +1,3 @@
+rootProject.name = 'petflap'
+
+include 'petflap-core'
