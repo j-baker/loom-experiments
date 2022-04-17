@@ -29,7 +29,7 @@ javaVersions {
 allprojects {
     apply plugin: 'com.palantir.java-format'
 
-    group 'com.github.j-baker'
+    group 'com.github.j-baker.loom'
     version rootProject.version
 
     repositories {
