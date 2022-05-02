@@ -4,6 +4,7 @@
 
 package io.jbaker.loom.raft;
 
+import com.google.common.collect.Maps;
 import com.google.common.collect.Ordering;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -13,10 +14,12 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
@@ -24,6 +27,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
+import java.util.stream.Stream;
 import org.immutables.value.Value;
 
 public final class Raft {
@@ -57,6 +61,7 @@ public final class Raft {
 
     record LogIndex(int index) implements ExtraComparable<LogIndex> {
         static final LogIndex ZERO = new LogIndex(0);
+        static final LogIndex ONE = new LogIndex(1);
 
         @Override
         public int compareTo(LogIndex logIndex) {
@@ -86,21 +91,21 @@ public final class Raft {
 
     private static final class PersistentState {
         private final ServerId me;
-        private TermId currentTerm;
-        private Optional<ServerId> votedFor;
+        private TermId currentTerm = new TermId(0);
+        private Optional<ServerId> votedFor = Optional.empty();
         private final List<LogEntry> log = new ArrayList<>();
 
         private PersistentState(ServerId me) {
             this.me = me;
         }
 
-        public Optional<LogEntryMetadata> lastLogEntry() {
+        public LogEntryMetadata lastLogEntry() {
             if (log.isEmpty()) {
-                return Optional.empty();
+                return new LogEntryMetadata(LogIndex.ZERO, new TermId(0));
             }
             int index = log.size();
             TermId term = log.get(index - 1).term;
-            return Optional.of(new LogEntryMetadata(new LogIndex(index), term));
+            return new LogEntryMetadata(new LogIndex(index), term);
         }
 
         public LogEntryMetadata logMetadata(int logIndex) {
@@ -108,6 +113,9 @@ public final class Raft {
         }
 
         public LogEntryMetadata logMetadata(LogIndex logIndex) {
+            if (logIndex.equals(LogIndex.ZERO)) {
+                return new LogEntryMetadata(LogIndex.ZERO, new TermId(0));
+            }
             return logMetadata(logIndex.index - 1);
         }
 
@@ -118,7 +126,14 @@ public final class Raft {
         }
     }
 
-    record LogEntryMetadata(LogIndex logIndex, TermId termId) {}
+    record LogEntryMetadata(LogIndex logIndex, TermId termId) implements ExtraComparable<LogEntryMetadata> {
+        @Override
+        public int compareTo(LogEntryMetadata logEntryMetadata) {
+            return Comparator.comparing(LogEntryMetadata::logIndex)
+                    .thenComparing(LogEntryMetadata::termId)
+                    .compare(this, logEntryMetadata);
+        }
+    }
 
     private static final class VolatileState {
         private LogIndex commitIndex = LogIndex.ZERO;
@@ -203,16 +218,25 @@ public final class Raft {
         }
 
         @GuardedBy("this")
-        private void updateLeaderCommitIndex(int quorumSize) {
+        private void updateLeaderCommitIndex(Set<ServerId> otherServerIds) {
+            int quorumSIze = ((otherServerIds.size() + 1) + 1) / 2;
             if (mode == Mode.LEADER) {
-                List<LogIndex> matchIndices = leaderVolatileState.get().matchIndices.values().stream()
+                List<LogIndex> matchIndices = Stream.concat(
+                                Stream.of(volatileState.commitIndex),
+                                otherServerIds.stream().map(id -> leaderVolatileState
+                                        .get()
+                                        .matchIndices
+                                        .getOrDefault(id, LogIndex.ZERO)))
                         .sorted()
                         .toList();
-                int matchIndex = matchIndices.size() - quorumSize;
+                int matchIndex = matchIndices.size() - quorumSIze;
                 if (matchIndex < 0) {
                     return;
                 }
                 LogIndex replicatedIndex = matchIndices.get(matchIndex);
+                if (replicatedIndex.equals(LogIndex.ZERO)) {
+                    return;
+                }
                 LogEntry logEntry = persistentState.log.get(replicatedIndex.listIndex());
                 if (logEntry.term.equals(persistentState.currentTerm)) {
                     volatileState.commitIndex = replicatedIndex;
@@ -223,7 +247,7 @@ public final class Raft {
         private synchronized void keepStateMachineUpToDate() {
             while (volatileState.commitIndex.greaterThan(volatileState.lastApplied)) {
                 volatileState.lastApplied = volatileState.lastApplied.inc();
-                stateMachine.apply(persistentState.log.get(volatileState.lastApplied.index));
+                stateMachine.apply(persistentState.log.get(volatileState.lastApplied.listIndex()));
             }
         }
     }
@@ -234,7 +258,7 @@ public final class Raft {
 
         ServerId leaderId();
 
-        Optional<LogEntryMetadata> prevLogEntry();
+        LogEntryMetadata prevLogEntry();
 
         List<LogEntry> entries();
 
@@ -258,7 +282,7 @@ public final class Raft {
 
         ServerId candidateId();
 
-        Optional<LogEntryMetadata> lastLogEntry();
+        LogEntryMetadata lastLogEntry();
 
         class Builder extends ImmutableRequestVoteRequest.Builder {}
     }
@@ -310,7 +334,7 @@ public final class Raft {
         ListenableFuture<ApplyCommandResponse> applyCommand(ApplyCommandRequest request);
     }
 
-    record InitializedServer(ServerId id, Client client, Server server) {}
+    public record InitializedServer(ServerId id, Client client, Server server) {}
 
     public static List<InitializedServer> create(
             int numServers,
@@ -386,7 +410,7 @@ public final class Raft {
         private ServerImpl(
                 StateMachine stateMachine, ServerConfig serverConfig, Clock clock, Map<ServerId, Client> otherServers) {
             this.me = serverConfig.me();
-            this.otherServers = Map.copyOf(otherServers);
+            this.otherServers = Map.copyOf(Maps.filterKeys(otherServers, id -> !id.equals(serverConfig.me())));
             this.state = new ServerState(stateMachine, new PersistentState(serverConfig.me()));
             this.serverConfig = serverConfig;
             this.clock = clock;
@@ -417,7 +441,8 @@ public final class Raft {
 
             synchronized (state) {
                 if (state.mode == Mode.FOLLOWER
-                        && now.isAfter(state.lastUpdated.plus(serverConfig.electionTimeout()))) {
+                        && (state.lastUpdated == null
+                                || now.isAfter(state.lastUpdated.plus(serverConfig.electionTimeout())))) {
                     state.setMode(Mode.CANDIDATE);
                 }
             }
@@ -440,27 +465,29 @@ public final class Raft {
         }
 
         private void sendNoOpUpdates() {
-            AppendEntriesRequest request;
+            List<Supplier<ListenableFuture<AppendEntriesResponse>>> suppliers = new ArrayList<>();
             synchronized (state) {
                 if (state.mode != Mode.LEADER) {
                     return;
                 }
-                request = new AppendEntriesRequest.Builder()
+                otherServers.forEach((serverId, client) -> new AppendEntriesRequest.Builder()
                         .leaderId(state.persistentState.me)
                         .term(state.persistentState.currentTerm)
                         .leaderCommit(state.volatileState.commitIndex)
-                        .build();
+                        .prevLogEntry(state.persistentState.logMetadata(
+                                state.leaderVolatileState.get().matchIndices.getOrDefault(serverId, LogIndex.ZERO)))
+                        .build());
             }
             // TODO(jbaker): refactor to use vthreads for this...
-            for (ListenableFuture<AppendEntriesResponse> future : otherServers.values().stream()
-                    .map(client -> client.appendEntries(request))
-                    .toList()) {
+            for (ListenableFuture<AppendEntriesResponse> future :
+                    suppliers.stream().map(Supplier::get).toList()) {
                 try {
                     AppendEntriesResponse response = future.get();
                     synchronized (state) {
                         state.handleReceivedTerm(response.term());
                     }
-                } catch (ExecutionException _e) {
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
                     // TODO(jbaker): log
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -473,25 +500,27 @@ public final class Raft {
             // TODO(jbaker): run this in vthreads
             otherServers.keySet().forEach(this::ensureFollowerUpToDate);
             synchronized (state) {
-                state.updateLeaderCommitIndex(quorumSize);
+                state.updateLeaderCommitIndex(otherServers.keySet());
             }
         }
 
         private void ensureFollowerUpToDate(ServerId server) {
             while (true) {
                 Optional<LeaderVolatileState> maybeLeaderState;
-                Optional<LogEntryMetadata> maybeLastLogEntry;
+                LogEntryMetadata lastLogEntry;
                 synchronized (state) {
                     maybeLeaderState = state.leaderVolatileState;
-                    maybeLastLogEntry = state.persistentState.lastLogEntry();
+                    lastLogEntry = state.persistentState.lastLogEntry();
                 }
-                if (maybeLeaderState.isEmpty() || maybeLastLogEntry.isEmpty()) {
+                if (maybeLeaderState.isEmpty()) {
                     return;
                 }
                 LeaderVolatileState leaderState = maybeLeaderState.get();
-                LogEntryMetadata lastLogEntry = maybeLastLogEntry.get();
+                if (lastLogEntry.logIndex.equals(LogIndex.ZERO)) {
+                    return;
+                }
 
-                LogIndex nextIndex = leaderState.nextIndices.get(server);
+                LogIndex nextIndex = leaderState.nextIndices.getOrDefault(server, LogIndex.ONE);
                 if (lastLogEntry.logIndex.geq(nextIndex)) {
                     AppendEntriesRequest request;
                     synchronized (state) {
@@ -500,9 +529,9 @@ public final class Raft {
                         }
                         List<LogEntry> logEntries = state.persistentState.log.subList(
                                 nextIndex.listIndex(), state.persistentState.log.size());
-                        Optional<LogEntryMetadata> prevEntry = nextIndex.listIndex() == 0
-                                ? Optional.empty()
-                                : Optional.of(state.persistentState.logMetadata(nextIndex.listIndex() - 1));
+                        LogEntryMetadata prevEntry = nextIndex.listIndex() == 0
+                                ? new LogEntryMetadata(LogIndex.ZERO, new TermId(0))
+                                : state.persistentState.logMetadata(nextIndex.listIndex() - 1);
                         request = new AppendEntriesRequest.Builder()
                                 .term(state.persistentState.currentTerm)
                                 .leaderId(state.persistentState.me)
@@ -517,7 +546,7 @@ public final class Raft {
                         // races?
                         if (response.success()) {
                             leaderState.matchIndices.put(server, lastLogEntry.logIndex);
-                            leaderState.nextIndices.put(server, lastLogEntry.logIndex);
+                            leaderState.nextIndices.put(server, lastLogEntry.logIndex.inc());
                             return;
                         } else if (response.term().equals(state.persistentState.currentTerm)) {
                             leaderState.nextIndices.put(server, nextIndex.dec());
@@ -532,7 +561,7 @@ public final class Raft {
 
         private boolean tryToWinElection() {
             TermId electionTerm;
-            Optional<LogEntryMetadata> lastLogEntry;
+            LogEntryMetadata lastLogEntry;
             synchronized (state) {
                 if (state.mode != Mode.CANDIDATE) {
                     return false;
@@ -562,7 +591,8 @@ public final class Raft {
                     if (response.voteGranted()) {
                         votesCollected++;
                     }
-                } catch (ExecutionException _e) {
+                } catch (ExecutionException e) {
+                    e.printStackTrace();
                     // TODO(jbaker): Log
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
@@ -590,26 +620,25 @@ public final class Raft {
             }
 
             List<LogEntry> log = state.persistentState.log;
-            if (request.prevLogEntry().isEmpty() && !log.isEmpty()) {
+            LogEntryMetadata prevLogEntry = request.prevLogEntry();
+
+            int prevLogIndex = prevLogEntry.logIndex.listIndex() + 1;
+            if (!prevLogEntry.logIndex.equals(LogIndex.ZERO)
+                    && (log.size() <= prevLogIndex
+                            || !log.get(prevLogIndex).term.equals(prevLogEntry.termId))) {
                 return false;
-            } else if (request.prevLogEntry().isPresent()) {
-                LogEntryMetadata prevLogEntry = request.prevLogEntry().get();
-                int prevLogIndex = prevLogEntry.logIndex.index;
-                if (log.size() <= prevLogIndex || !log.get(prevLogIndex).term.equals(prevLogEntry.termId)) {
-                    return false;
-                }
-
-                List<LogEntry> overlapping = log.subList(prevLogIndex, log.size());
-                for (int i = 0; i < request.entries().size() && i < overlapping.size(); i++) {
-                    if (!request.entries().get(i).equals(overlapping.get(i))) {
-                        overlapping.subList(i, overlapping.size()).clear();
-                        break;
-                    }
-                }
-
-                log.addAll(request.entries()
-                        .subList(log.size() - prevLogIndex, request.entries().size()));
             }
+
+            List<LogEntry> overlapping = log.subList(prevLogIndex, log.size());
+            for (int i = 0; i < request.entries().size() && i < overlapping.size(); i++) {
+                if (!request.entries().get(i).equals(overlapping.get(i))) {
+                    overlapping.subList(i, overlapping.size()).clear();
+                    break;
+                }
+            }
+
+            log.addAll(request.entries()
+                    .subList(log.size() - prevLogIndex, request.entries().size()));
 
             if (request.leaderCommit().index > state.volatileState.commitIndex.index) {
                 state.volatileState.commitIndex =
@@ -629,6 +658,28 @@ public final class Raft {
             }
         }
 
+        @GuardedBy("state")
+        private boolean requestVoteInternal(RequestVoteRequest request) {
+            state.handleReceivedTerm(request.term());
+
+            if (request.term().lessThan(state.persistentState.currentTerm)) {
+                return false;
+            }
+
+            if (state.persistentState.votedFor.isPresent()
+                    && !state.persistentState.votedFor.get().equals(request.candidateId())) {
+                return false;
+            }
+
+            // TODO(jbaker): I'm not sure that this logic is quite correct...
+            LogEntryMetadata ourLast = state.persistentState.lastLogEntry();
+            if (request.lastLogEntry().lessThan(ourLast)) {
+                return false;
+            }
+            state.persistentState.votedFor = Optional.of(request.candidateId());
+            return true;
+        }
+
         @Override
         public ApplyCommandResponse applyCommand(ApplyCommandRequest request) {
             LogEntryMetadata entry;
@@ -642,27 +693,12 @@ public final class Raft {
             synchronized (state) {
                 if (state.volatileState.commitIndex.geq(entry.logIndex)
                         && state.persistentState.logMetadata(entry.logIndex).equals(entry)) {
+                    state.keepStateMachineUpToDate();
                     return ApplyCommandResponse.of(true);
                 } else {
                     return ApplyCommandResponse.of(false);
                 }
             }
-        }
-
-        @GuardedBy("state")
-        private boolean requestVoteInternal(RequestVoteRequest request) {
-            if (request.term().lessThan(state.persistentState.currentTerm)) {
-                return false;
-            }
-
-            if (state.persistentState.votedFor.isPresent()
-                    && !state.persistentState.votedFor.get().equals(request.candidateId())) {
-                return false;
-            }
-
-            // TODO(jbaker): at least as up to date check?
-            state.persistentState.votedFor = Optional.of(request.candidateId());
-            return true;
         }
     }
 }
