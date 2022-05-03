@@ -6,7 +6,7 @@ package io.jbaker.loom.raft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.google.common.util.concurrent.Futures;
+import com.google.common.collect.MoreCollectors;
 import io.jbaker.loom.raft.Raft.ApplyCommandRequest;
 import io.jbaker.loom.raft.Raft.InitializedServer;
 import io.jbaker.loom.raft.Raft.LogEntry;
@@ -14,39 +14,39 @@ import io.jbaker.loom.raft.Raft.StateMachine;
 import io.jbaker.loom.raft.util.BackgroundTask;
 import java.time.Duration;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 public class BasicRaftTest {
-    private final BackgroundTaskRunner backgroundTaskRunner = new BackgroundTaskRunner();
-    private final ExecutorService executor = Executors.newCachedThreadPool();
 
-    @AfterEach
-    void afterEach() {
-        executor.shutdown();
-        backgroundTaskRunner.close();
+    private static List<InitializedServer> createServers(Simulation simulation) {
+        List<Counter> counters = List.of(new Counter(), new Counter(), new Counter());
+        List<InitializedServer> servers = Raft.create(3, counters.iterator()::next, new BackgroundTaskRunner(simulation.newScheduledExecutor(TimeDistribution.uniform(simulation.random(),
+                        Duration.ZERO, Duration.ofMillis(1)))),
+                simulation.newExecutor(TimeDistribution.uniform(simulation.random(), Duration.ofMillis(1),
+                        Duration.ofMillis(10))),
+                simulation.clock());
+        return servers;
     }
 
     @Test
-    void test() throws InterruptedException {
-        List<Counter> counters = List.of(new Counter(), new Counter(), new Counter());
-        List<InitializedServer> servers = Raft.create(3, counters.iterator()::next, backgroundTaskRunner, executor);
-        Thread.sleep(1000);
+    void test() {
+        Simulation simulation = Simulation.create(0);
+        List<InitializedServer> servers = createServers(simulation);
+        simulation.advanceTime(Duration.ofMillis(60000));
         int successCount = 0;
         for (int i = 0; i < 100; i++) {
             ApplyCommandRequest request =
-                    new ApplyCommandRequest.Builder().data((byte) i).build();
-            successCount += servers.stream()
-                    .map(server -> Futures.getUnchecked(server.client().applyCommand(request)))
-                    .mapToInt(response -> response.applied() ? 1 : 0)
-                    .sum();
+                    new ApplyCommandRequest.Builder().data(Integer.toString(i)).build();
+            boolean roundSuccess = simulation.runUntilComplete(servers.stream()
+                            .filter(InitializedServer::isLeader)
+                    .collect(MoreCollectors.onlyElement())
+                    .client().applyCommand(request))
+                    .applied();
+            successCount += roundSuccess ? 1 : 0;
         }
-        System.out.println("done!");
-        Thread.sleep(1000);
+        simulation.advanceTime(Duration.ofMillis(100));
         assertThat(successCount).isEqualTo(100);
     }
 
@@ -63,7 +63,11 @@ public class BasicRaftTest {
     }
 
     private static final class BackgroundTaskRunner implements BackgroundTask.Executor {
-        private ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor();
+        private final ScheduledExecutorService scheduledExecutorService;
+
+        private BackgroundTaskRunner(ScheduledExecutorService scheduledExecutorService) {
+            this.scheduledExecutorService = scheduledExecutorService;
+        }
 
         @Override
         public void close() {
