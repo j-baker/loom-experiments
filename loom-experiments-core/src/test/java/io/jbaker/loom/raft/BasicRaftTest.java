@@ -7,11 +7,14 @@ package io.jbaker.loom.raft;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import com.google.common.collect.MoreCollectors;
-import io.jbaker.loom.raft.Raft.ApplyCommandRequest;
+import com.palantir.conjure.java.lib.Bytes;
 import io.jbaker.loom.raft.Raft.InitializedServer;
-import io.jbaker.loom.raft.Raft.LogEntry;
 import io.jbaker.loom.raft.Raft.StateMachine;
+import io.jbaker.loom.raft.api.ApplyCommandRequest;
+import io.jbaker.loom.raft.api.Command;
+import io.jbaker.loom.raft.api.LogEntry;
 import io.jbaker.loom.raft.util.BackgroundTask;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.ScheduledExecutorService;
@@ -38,12 +41,12 @@ public class BasicRaftTest {
         int successCount = 0;
         for (int i = 0; i < 100; i++) {
             ApplyCommandRequest request =
-                    new ApplyCommandRequest.Builder().data(Integer.toString(i)).build();
+                    ApplyCommandRequest.of(Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
             boolean roundSuccess = simulation.runUntilComplete(servers.stream()
                             .filter(InitializedServer::isLeader)
                     .collect(MoreCollectors.onlyElement())
                     .client().applyCommand(request))
-                    .applied();
+                    .getApplied();
             successCount += roundSuccess ? 1 : 0;
         }
         simulation.advanceTime(Duration.ofMillis(100));

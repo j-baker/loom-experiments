@@ -1,4 +1,5 @@
 com.google.guava:* = 31.1-jre
+com.palantir.conjure:* = 4.29.0
 com.palantir.conjure.java:* = 6.42.0
 com.palantir.dialogue:* = 3.52.0
 org.immutables:value = 2.9.0

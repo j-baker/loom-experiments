@@ -1,4 +1,7 @@
 dependencies {
+  implementation project(':loom-experiments-api:loom-experiments-api-dialogue')
+  implementation project(':loom-experiments-api:loom-experiments-api-undertow')
+
   implementation 'com.google.guava:guava'
   implementation 'com.palantir.conjure.java:conjure-undertow-annotations'
   implementation 'com.palantir.dialogue:dialogue-annotations'
