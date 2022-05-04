@@ -15,11 +15,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 public class BrokenMemoizingSupplierTest {
 
+    @Disabled("Expected to fail")
     @ParameterizedTest
     @MethodSource("range")
     void testAllCases(int seed) {

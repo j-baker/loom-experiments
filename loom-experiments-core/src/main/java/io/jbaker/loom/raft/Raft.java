@@ -29,6 +29,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -280,7 +281,7 @@ public final class Raft {
                                         .get()
                                         .matchIndices
                                         .getOrDefault(id, LogIndexes.ZERO)))
-                        .sorted()
+                        .sorted(Comparator.comparing(LogIndex::get))
                         .toList();
                 int matchIndex = matchIndices.size() - quorumSIze;
                 if (matchIndex < 0) {
