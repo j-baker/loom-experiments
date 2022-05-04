@@ -57,9 +57,6 @@ public class BasicRaftTest {
         private int count = 0;
 
         @Override
-        public void init() {}
-
-        @Override
         public void apply(LogEntry _entry) {
             count++;
         }

@@ -2,10 +2,11 @@
  * (c) Copyright 2022 Palantir Technologies Inc. All rights reserved.
  */
 
-package io.jbaker.loom.raft;
+package io.jbaker.loom.supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.jbaker.loom.raft.HackVirtualThreads;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

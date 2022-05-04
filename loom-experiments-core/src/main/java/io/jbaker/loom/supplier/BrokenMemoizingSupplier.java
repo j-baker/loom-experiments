@@ -2,7 +2,7 @@
  * (c) Copyright 2022 Palantir Technologies Inc. All rights reserved.
  */
 
-package io.jbaker.loom.raft;
+package io.jbaker.loom.supplier;
 
 import com.google.common.annotations.VisibleForTesting;
 import java.util.concurrent.locks.Lock;

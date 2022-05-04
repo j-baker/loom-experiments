@@ -4,8 +4,6 @@
 
 package io.jbaker.loom.raft;
 
-import static com.palantir.logsafe.Preconditions.checkArgument;
-
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -25,6 +23,9 @@ import io.jbaker.loom.raft.api.RequestVoteResponse;
 import io.jbaker.loom.raft.api.ServerId;
 import io.jbaker.loom.raft.api.TermId;
 import io.jbaker.loom.raft.util.BackgroundTask;
+import io.jbaker.loom.raft.util.LogIndexes;
+import io.jbaker.loom.raft.util.ServerIds;
+import io.jbaker.loom.raft.util.TermIds;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,10 +34,8 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Executor;
 import java.util.function.Function;
@@ -49,145 +48,87 @@ import org.immutables.value.Value;
 public final class Raft {
     private Raft() {}
 
-    private static final class LogIndexes {
-        private LogIndexes() {}
-
-        static final LogIndex ZERO = LogIndex.of(0);
-        static final LogIndex ONE = LogIndex.of(1);
-
-        public static boolean isGreaterThan(LogIndex left, LogIndex right) {
-            return left.get() > right.get();
+    @Value.Modifiable
+    interface PersistentState {
+        static PersistentState create(ServerId me) {
+            return ModifiablePersistentState.create(me);
         }
 
-        public static int listIndex(LogIndex index) {
-            checkArgument(!index.equals(ZERO), "no list index for the sentinel entry");
-            return index.get() - 1;
+        @Value.Parameter
+        ServerId getMe();
+
+        @Value.Default
+        default TermId getCurrentTerm() {
+            return TermId.of(0);
         }
+        PersistentState setCurrentTerm(TermId currentTerm);
 
-        public static LogIndex inc(LogIndex index) {
-            return LogIndex.of(index.get() + 1);
-        }
-    }
+        Optional<ServerId> getVotedFor();
+        PersistentState setVotedFor(Optional<ServerId> votedFor);
 
-    private static final class ServerIds {
-        private ServerIds() {}
+        List<LogEntry> getLog();
 
-        static ServerId of(int id) {
-            return ServerId.of(new UUID(id, id));
-        }
-    }
-
-    private static final class TermIds {
-        private TermIds() {}
-
-        public static boolean isGreaterThan(TermId left, TermId right) {
-            return left.get() > right.get();
-        }
-    }
-
-    private static final class PersistentState {
-        private final ServerId me;
-        private TermId currentTerm = TermId.of(0);
-        private Optional<ServerId> votedFor = Optional.empty();
-        private final List<LogEntry> log = new ArrayList<>();
-
-        private PersistentState(ServerId me) {
-            this.me = me;
-        }
-
-        public LogEntryMetadata lastLogEntry() {
-            if (log.isEmpty()) {
+        default LogEntryMetadata lastLogEntry() {
+            if (getLog().isEmpty()) {
                 return LogEntryMetadata.of(TermId.of(0), LogIndexes.ZERO);
             }
-            int index = log.size();
-            TermId term = log.get(index - 1).getTerm();
+            int index = getLog().size();
+            TermId term = getLog().get(index - 1).getTerm();
             return LogEntryMetadata.of(term, LogIndex.of(index));
         }
 
-        public LogEntryMetadata logMetadata(int logIndex) {
-            return LogEntryMetadata.of(log.get(logIndex).getTerm(), LogIndex.of(logIndex + 1));
+        default LogEntryMetadata logMetadata(int logIndex) {
+            return LogEntryMetadata.of(getLog().get(logIndex).getTerm(), LogIndex.of(logIndex + 1));
         }
 
-        public LogEntryMetadata logMetadata(LogIndex logIndex) {
+        default LogEntryMetadata logMetadata(LogIndex logIndex) {
             if (logIndex.equals(LogIndexes.ZERO)) {
                 return LogEntryMetadata.of(TermId.of(0), LogIndexes.ZERO);
             }
             return logMetadata(logIndex.get() - 1);
         }
 
-        public LogEntryMetadata addEntryAsLeader(Command data) {
-            LogEntry logEntry = LogEntry.of(currentTerm, data);
-            log.add(logEntry);
-            return LogEntryMetadata.of(currentTerm, LogIndex.of(log.size()));
+        default LogEntryMetadata addEntryAsLeader(Command data) {
+            LogEntry logEntry = LogEntry.of(getCurrentTerm(), data);
+            getLog().add(logEntry);
+            return LogEntryMetadata.of(getCurrentTerm(), LogIndex.of(getLog().size()));
         }
 
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) {
-                return true;
-            }
-            if (other == null || getClass() != other.getClass()) {
-                return false;
-            }
-            PersistentState that = (PersistentState) other;
-            return me.equals(that.me) && currentTerm.equals(that.currentTerm) && votedFor.equals(that.votedFor)
-                    && log.equals(
-                    that.log);
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(me, currentTerm, votedFor, log);
-        }
     }
 
-    private static final class VolatileState {
-        private LogIndex commitIndex = LogIndexes.ZERO;
-        private LogIndex lastApplied = LogIndexes.ZERO;
-
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) {
-                return true;
-            }
-            if (other == null || getClass() != other.getClass()) {
-                return false;
-            }
-            VolatileState that = (VolatileState) other;
-            return commitIndex.equals(that.commitIndex) && lastApplied.equals(that.lastApplied);
+    @Value.Modifiable
+    interface VolatileState {
+        static VolatileState create() {
+            return ModifiableVolatileState.create();
         }
 
-        @Override
-        public int hashCode() {
-            return Objects.hash(commitIndex, lastApplied);
+        @Value.Default
+        default LogIndex getCommitIndex() {
+            return LogIndexes.ZERO;
         }
+
+        VolatileState setCommitIndex(LogIndex commitIndex);
+
+        @Value.Default
+        default LogIndex getLastApplied() {
+            return LogIndexes.ZERO;
+        }
+
+        VolatileState setLastApplied(LogIndex lastApplied);
     }
 
-    private static final class LeaderVolatileState {
-        private final Map<ServerId, LogIndex> nextIndices = new HashMap<>();
-        private final Map<ServerId, LogIndex> matchIndices = new HashMap<>();
 
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) {
-                return true;
-            }
-            if (other == null || getClass() != other.getClass()) {
-                return false;
-            }
-            LeaderVolatileState that = (LeaderVolatileState) other;
-            return nextIndices.equals(that.nextIndices) && matchIndices.equals(that.matchIndices);
+    @Value.Modifiable
+    interface LeaderVolatileState {
+        static LeaderVolatileState create() {
+            return ModifiableLeaderVolatileState.create();
         }
 
-        @Override
-        public int hashCode() {
-            return Objects.hash(nextIndices, matchIndices);
-        }
+        Map<ServerId, LogIndex> getNextIndices();
+        Map<ServerId, LogIndex> getMatchIndices();
     }
 
     interface StateMachine {
-        void init();
-
         void apply(LogEntry entry);
     }
 
@@ -200,86 +141,73 @@ public final class Raft {
         class Builder extends ImmutableServerConfig.Builder {}
     }
 
-    private static final class ServerState {
-        @GuardedBy("this")
-        private final PersistentState persistentState;
-
-        @GuardedBy("this")
-        private final VolatileState volatileState = new VolatileState();
-
-        @GuardedBy("this")
-        private Optional<LeaderVolatileState> leaderVolatileState = Optional.empty();
-
-        @GuardedBy("this")
-        private LeadershipMode mode = LeadershipMode.FOLLOWER;
-
-        @GuardedBy("this")
-        private Instant lastUpdated = Instant.MIN;
-
-        // TODO(jbaker): Persistent state or volatile?
-        private final StateMachine stateMachine;
-
-        private ServerState(StateMachine stateMachine, PersistentState persistentState) {
-            this.persistentState = persistentState;
-            this.stateMachine = stateMachine;
+    @Value.Modifiable
+    interface ServerState {
+        static ServerState create(PersistentState persistentState, StateMachine stateMachine) {
+            return ModifiableServerState.create(persistentState, stateMachine);
         }
 
-        @Override
-        public boolean equals(Object other) {
-            if (this == other) {
-                return true;
-            }
-            if (other == null || getClass() != other.getClass()) {
-                return false;
-            }
-            ServerState that = (ServerState) other;
-            return persistentState.equals(that.persistentState) && volatileState.equals(that.volatileState)
-                    && leaderVolatileState.equals(that.leaderVolatileState) && mode == that.mode
-                    && lastUpdated.equals(that.lastUpdated);
+        @Value.Parameter
+        PersistentState getPersistent();
+
+        @Value.Parameter
+        StateMachine getStateMachine();
+
+        @Value.Default
+        default VolatileState getVolatile() {
+            return VolatileState.create();
         }
 
-        @Override
-        public int hashCode() {
-            return Objects.hash(persistentState, volatileState, leaderVolatileState, mode, lastUpdated);
+        Optional<LeaderVolatileState> getLeaderVolatile();
+
+        ServerState setLeaderVolatile(Optional<LeaderVolatileState> leaderVolatileState);
+
+        @Value.Default
+        default Instant getLastUpdated() {
+            return Instant.MIN;
         }
 
-        public synchronized LeadershipMode getLeadershipMode() {
-            return mode;
+        ServerState setLastUpdated(Instant lastUpdated);
+
+        @Value.Default
+        default LeadershipMode getLeadershipMode() {
+            return LeadershipMode.FOLLOWER;
         }
 
-        @GuardedBy("this")
-        private void setLeadershipMode(LeadershipMode newMode) {
-            if (newMode == this.mode) {
+        default LeadershipMode getMode() {
+            return getLeadershipMode();
+        }
+
+        default void setMode(LeadershipMode newMode) {
+            if (newMode.equals(getLeadershipMode())) {
                 return;
             }
 
             if (newMode == LeadershipMode.LEADER) {
-                leaderVolatileState = Optional.of(new LeaderVolatileState());
+                setLeaderVolatile(Optional.of(LeaderVolatileState.create()));
             } else {
-                leaderVolatileState = Optional.empty();
+                setLeaderVolatile(Optional.empty());
             }
-            this.mode = newMode;
+            ((ModifiableServerState) this).setLeadershipMode(newMode);
         }
 
-        @GuardedBy("this")
-        private void handleReceivedTerm(TermId term) {
-            if (!TermIds.isGreaterThan(term, persistentState.currentTerm)) {
+        default void handleReceivedTerm(TermId term) {
+            if (!TermIds.isGreaterThan(term, getPersistent().getCurrentTerm())) {
                 return;
             }
-            persistentState.currentTerm = term;
-            setLeadershipMode(LeadershipMode.FOLLOWER);
-            persistentState.votedFor = Optional.empty();
+            getPersistent().setCurrentTerm(term);
+            setMode(LeadershipMode.FOLLOWER);
+            getPersistent().setVotedFor(Optional.empty());
         }
 
-        @GuardedBy("this")
-        private void updateLeaderCommitIndex(Set<ServerId> otherServerIds) {
+        default void updateLeaderCommitIndex(Set<ServerId> otherServerIds) {
             int quorumSIze = ((otherServerIds.size() + 1) + 1) / 2;
-            if (mode == LeadershipMode.LEADER) {
+            if (getMode() == LeadershipMode.LEADER) {
                 List<LogIndex> matchIndices = Stream.concat(
-                                Stream.of(volatileState.commitIndex),
-                                otherServerIds.stream().map(id -> leaderVolatileState
+                                Stream.of(getVolatile().getCommitIndex()),
+                                otherServerIds.stream().map(id -> getLeaderVolatile()
                                         .get()
-                                        .matchIndices
+                                        .getMatchIndices()
                                         .getOrDefault(id, LogIndexes.ZERO)))
                         .sorted(Comparator.comparing(LogIndex::get))
                         .toList();
@@ -291,17 +219,17 @@ public final class Raft {
                 if (replicatedIndex.equals(LogIndexes.ZERO)) {
                     return;
                 }
-                LogEntry logEntry = persistentState.log.get(LogIndexes.listIndex(replicatedIndex));
-                if (logEntry.getTerm().equals(persistentState.currentTerm)) {
-                    volatileState.commitIndex = replicatedIndex;
+                LogEntry logEntry = getPersistent().getLog().get(LogIndexes.listIndex(replicatedIndex));
+                if (logEntry.getTerm().equals(getPersistent().getCurrentTerm())) {
+                    getVolatile().setCommitIndex(replicatedIndex);
                 }
             }
         }
 
-        private synchronized void keepStateMachineUpToDate() {
-            while (LogIndexes.isGreaterThan(volatileState.commitIndex, volatileState.lastApplied)) {
-                volatileState.lastApplied = LogIndexes.inc(volatileState.lastApplied);
-                stateMachine.apply(persistentState.log.get(LogIndexes.listIndex(volatileState.lastApplied)));
+        default void keepStateMachineUpToDate() {
+            while (getVolatile().getCommitIndex().get() > getVolatile().getLastApplied().get()) {
+                getVolatile().setLastApplied(LogIndexes.inc(getVolatile().getLastApplied()));
+                getStateMachine().apply(getPersistent().getLog().get(LogIndexes.listIndex(getVolatile().getLastApplied())));
             }
         }
     }
@@ -327,15 +255,15 @@ public final class Raft {
         public String toString() {
             ServerImpl serv = (ServerImpl)  server;
             synchronized (serv.state) {
-                return "id: %s, mode: %s, currentTerm: %s, votedFor: %s".formatted(serv.me, serv.state.mode,
-                        serv.state.persistentState.currentTerm, serv.state.persistentState.votedFor);
+                return "id: %s, mode: %s, currentTerm: %s, votedFor: %s".formatted(serv.me, serv.state.getMode(),
+                        serv.state.getPersistent().getCurrentTerm(), serv.state.getPersistent().getVotedFor());
             }
         }
 
         public boolean isLeader() {
             ServerImpl serv = (ServerImpl)  server;
             synchronized (serv.state) {
-                return serv.state.mode == LeadershipMode.LEADER;
+                return serv.state.getMode() == LeadershipMode.LEADER;
             }
         }
 
@@ -429,7 +357,7 @@ public final class Raft {
                 StateMachine stateMachine, ServerConfig serverConfig, Clock clock, Map<ServerId, Client> otherServers) {
             this.me = serverConfig.me();
             this.otherServers = Map.copyOf(Maps.filterKeys(otherServers, id -> !id.equals(serverConfig.me())));
-            this.state = new ServerState(stateMachine, new PersistentState(serverConfig.me()));
+            this.state = ServerState.create(PersistentState.create(serverConfig.me()), stateMachine);
             this.serverConfig = serverConfig;
             this.clock = clock;
             this.quorumSize = (this.otherServers.size() + 1 + 1) / 2;
@@ -445,9 +373,9 @@ public final class Raft {
 
             synchronized (state) {
                 // possibly not right
-                state.lastUpdated = now;
+                state.setLastUpdated(now);
 
-                return switch (state.mode.get()) {
+                return switch (state.getMode().get()) {
                     case CANDIDATE, FOLLOWER -> serverConfig.electionTimeout();
                     case LEADER -> serverConfig.electionTimeout().dividedBy(2);
                     case UNKNOWN -> throw new SafeIllegalStateException("unreachable");
@@ -459,18 +387,18 @@ public final class Raft {
             state.keepStateMachineUpToDate();
 
             synchronized (state) {
-                if (state.mode == LeadershipMode.FOLLOWER
-                        && (state.lastUpdated == null
-                                || now.isAfter(state.lastUpdated.plus(serverConfig.electionTimeout())))) {
-                    state.setLeadershipMode(LeadershipMode.CANDIDATE);
+                if (state.getMode() == LeadershipMode.FOLLOWER
+                        && (state.getLastUpdated() == null
+                                || now.isAfter(state.getLastUpdated().plus(serverConfig.electionTimeout())))) {
+                    state.setMode(LeadershipMode.CANDIDATE);
                 }
             }
 
             if (state.getLeadershipMode() == LeadershipMode.CANDIDATE) {
                 boolean wonElection = tryToWinElection();
                 synchronized (state) {
-                    if (wonElection && state.mode == LeadershipMode.CANDIDATE) {
-                        state.setLeadershipMode(LeadershipMode.LEADER);
+                    if (wonElection && state.getMode() == LeadershipMode.CANDIDATE) {
+                        state.setMode(LeadershipMode.LEADER);
                     }
                 }
             }
@@ -486,16 +414,16 @@ public final class Raft {
         private void sendNoOpUpdates() {
             List<Supplier<ListenableFuture<AppendEntriesResponse>>> suppliers = new ArrayList<>();
             synchronized (state) {
-                if (state.mode != LeadershipMode.LEADER) {
+                if (state.getMode() != LeadershipMode.LEADER) {
                     return;
                 }
                 otherServers.forEach((serverId, client) -> {
-                    LogEntryMetadata logEntryMetadata = state.persistentState.logMetadata(
-                            state.leaderVolatileState.get().matchIndices.getOrDefault(serverId, LogIndexes.ZERO));
+                    LogEntryMetadata logEntryMetadata = state.getPersistent().logMetadata(
+                            state.getLeaderVolatile().get().getMatchIndices().getOrDefault(serverId, LogIndexes.ZERO));
                     suppliers.add(() -> client.appendEntries(AppendEntriesRequest.builder()
-                            .leaderId(state.persistentState.me)
-                            .term(state.persistentState.currentTerm)
-                            .leaderCommit(state.volatileState.commitIndex)
+                            .leaderId(state.getPersistent().getMe())
+                            .term(state.getPersistent().getCurrentTerm())
+                            .leaderCommit(state.getVolatile().getCommitIndex())
                             .prevLogTerm(logEntryMetadata.getTerm())
                             .prevLogIndex(logEntryMetadata.getIndex())
                             .build()));
@@ -532,8 +460,8 @@ public final class Raft {
                 Optional<LeaderVolatileState> maybeLeaderState;
                 LogEntryMetadata lastLogEntry;
                 synchronized (state) {
-                    maybeLeaderState = state.leaderVolatileState;
-                    lastLogEntry = state.persistentState.lastLogEntry();
+                    maybeLeaderState = state.getLeaderVolatile();
+                    lastLogEntry = state.getPersistent().lastLogEntry();
                 }
                 if (maybeLeaderState.isEmpty()) {
                     return;
@@ -543,22 +471,22 @@ public final class Raft {
                     return;
                 }
 
-                LogIndex nextIndex = leaderState.nextIndices.getOrDefault(server, LogIndexes.ONE);
+                LogIndex nextIndex = leaderState.getNextIndices().getOrDefault(server, LogIndexes.ONE);
                 if (lastLogEntry.getIndex().get() >= nextIndex.get()) {
                     AppendEntriesRequest request;
                     synchronized (state) {
-                        if (state.mode != LeadershipMode.LEADER) {
+                        if (state.getMode() != LeadershipMode.LEADER) {
                             return;
                         }
-                        List<LogEntry> logEntries = state.persistentState.log.subList(
-                                LogIndexes.listIndex(nextIndex), state.persistentState.log.size());
+                        List<LogEntry> logEntries = state.getPersistent().getLog().subList(
+                                LogIndexes.listIndex(nextIndex), state.getPersistent().getLog().size());
                         LogEntryMetadata prevEntry = LogIndexes.listIndex(nextIndex) == 0
                                 ? LogEntryMetadata.of(TermId.of(0), LogIndexes.ZERO)
-                                : state.persistentState.logMetadata(LogIndexes.listIndex(nextIndex) - 1);
+                                : state.getPersistent().logMetadata(LogIndexes.listIndex(nextIndex) - 1);
                         request = AppendEntriesRequest.builder()
-                                .term(state.persistentState.currentTerm)
-                                .leaderId(state.persistentState.me)
-                                .leaderCommit(state.volatileState.commitIndex)
+                                .term(state.getPersistent().getCurrentTerm())
+                                .leaderId(state.getPersistent().getMe())
+                                .leaderCommit(state.getVolatile().getCommitIndex())
                                 .prevLogIndex(prevEntry.getIndex())
                                 .prevLogTerm(prevEntry.getTerm())
                                 .entries(logEntries)
@@ -569,11 +497,11 @@ public final class Raft {
                     synchronized (state) {
                         // races?
                         if (response.getSuccess()) {
-                            leaderState.matchIndices.put(server, lastLogEntry.getIndex());
-                            leaderState.nextIndices.put(server, LogIndexes.inc(lastLogEntry.getIndex()));
+                            leaderState.getMatchIndices().put(server, lastLogEntry.getIndex());
+                            leaderState.getNextIndices().put(server, LogIndexes.inc(lastLogEntry.getIndex()));
                             return;
-                        } else if (response.getTerm().equals(state.persistentState.currentTerm)) {
-                            leaderState.nextIndices.remove(server);
+                        } else if (response.getTerm().equals(state.getPersistent().getCurrentTerm())) {
+                            leaderState.getNextIndices().remove(server);
                             // leaderState.nextIndices.put(server, nextIndex.dec());
                         } else {
                             state.handleReceivedTerm(response.getTerm());
@@ -590,13 +518,13 @@ public final class Raft {
             TermId electionTerm;
             LogEntryMetadata lastLogEntry;
             synchronized (state) {
-                if (state.mode != LeadershipMode.CANDIDATE) {
+                if (state.getMode() != LeadershipMode.CANDIDATE) {
                     return false;
                 }
-                electionTerm = TermId.of(state.persistentState.currentTerm.get() + 1);
-                state.persistentState.currentTerm = electionTerm;
-                state.persistentState.votedFor = Optional.of(state.persistentState.me);
-                lastLogEntry = state.persistentState.lastLogEntry();
+                electionTerm = TermId.of(state.getPersistent().getCurrentTerm().get() + 1);
+                state.getPersistent().setCurrentTerm(electionTerm);
+                state.getPersistent().setVotedFor(Optional.of(state.getPersistent().getMe()));
+                lastLogEntry = state.getPersistent().lastLogEntry();
             }
             RequestVoteRequest request = RequestVoteRequest.builder()
                     .candidateId(me)
@@ -635,7 +563,7 @@ public final class Raft {
             synchronized (state) {
                 state.handleReceivedTerm(request.getTerm());
                 return AppendEntriesResponse.builder()
-                        .term(state.persistentState.currentTerm)
+                        .term(state.getPersistent().getCurrentTerm())
                         .success(internalAppendEntries(request))
                         .build();
             }
@@ -644,11 +572,11 @@ public final class Raft {
         @GuardedBy("state")
         @SuppressWarnings("CyclomaticComplexity")
         private boolean internalAppendEntries(AppendEntriesRequest request) {
-            if (request.getTerm().get() < state.persistentState.currentTerm.get()) {
+            if (request.getTerm().get() < state.getPersistent().getCurrentTerm().get()) {
                 return false;
             }
 
-            List<LogEntry> log = state.persistentState.log;
+            List<LogEntry> log = state.getPersistent().getLog();
 
             int prevLogIndex = request.getPrevLogIndex().get();
             if (!request.getPrevLogIndex().equals(LogIndexes.ZERO)
@@ -668,12 +596,11 @@ public final class Raft {
             log.addAll(request.getEntries()
                     .subList(request.getEntries().size() - (log.size() - prevLogIndex), request.getEntries().size()));
 
-            if (request.getLeaderCommit().get() > state.volatileState.commitIndex.get()) {
-                state.volatileState.commitIndex =
-                        LogIndex.of(Math.min(request.getLeaderCommit().get(), log.size() - 1));
+            if (request.getLeaderCommit().get() > state.getVolatile().getCommitIndex().get()) {
+                state.getVolatile().setCommitIndex(LogIndex.of(Math.min(request.getLeaderCommit().get(), log.size() - 1)));
             }
 
-            state.lastUpdated = clock.instant();
+            state.setLastUpdated(clock.instant());
             return true;
         }
 
@@ -682,7 +609,7 @@ public final class Raft {
             synchronized (state) {
                 state.handleReceivedTerm(request.getTerm());
                 return RequestVoteResponse.builder()
-                        .term(state.persistentState.currentTerm)
+                        .term(state.getPersistent().getCurrentTerm())
                         .voteGranted(requestVoteInternal(request))
                         .build();
             }
@@ -690,23 +617,23 @@ public final class Raft {
 
         @GuardedBy("state")
         private boolean requestVoteInternal(RequestVoteRequest request) {
-            if (request.getTerm().get() < state.persistentState.currentTerm.get()) {
+            if (request.getTerm().get() < state.getPersistent().getCurrentTerm().get()) {
                 return false;
             }
 
-            if (state.persistentState.votedFor.isPresent()
-                    && !state.persistentState.votedFor.get().equals(request.getCandidateId())) {
+            if (state.getPersistent().getVotedFor().isPresent()
+                    && !state.getPersistent().getVotedFor().get().equals(request.getCandidateId())) {
                 return false;
             }
 
             // TODO(jbaker): I'm not sure that this logic is quite correct...
-            LogEntryMetadata ourLast = state.persistentState.lastLogEntry();
+            LogEntryMetadata ourLast = state.getPersistent().lastLogEntry();
             if (request.getLastLogIndex().get() < ourLast.getIndex().get()
                     || (request.getLastLogIndex().get() == ourLast.getIndex().get()
                             && request.getLastLogTerm().get() < ourLast.getTerm().get())) {
                 return false;
             }
-            state.persistentState.votedFor = Optional.of(request.getCandidateId());
+            state.getPersistent().setVotedFor(Optional.of(request.getCandidateId()));
             return true;
         }
 
@@ -714,15 +641,15 @@ public final class Raft {
         public ApplyCommandResponse applyCommand(ApplyCommandRequest request) {
             LogEntryMetadata entry;
             synchronized (state) {
-                if (!state.mode.equals(LeadershipMode.LEADER)) {
+                if (!state.getMode().equals(LeadershipMode.LEADER)) {
                     return ApplyCommandResponse.of(false);
                 }
-                entry = state.persistentState.addEntryAsLeader(request.getData());
+                entry = state.getPersistent().addEntryAsLeader(request.getData());
             }
             ensureFollowersUpToDate();
             synchronized (state) {
-                if (state.volatileState.commitIndex.get() >= entry.getIndex().get()
-                        && state.persistentState.logMetadata(entry.getIndex()).equals(entry)) {
+                if (state.getVolatile().getCommitIndex().get() >= entry.getIndex().get()
+                        && state.getPersistent().logMetadata(entry.getIndex()).equals(entry)) {
                     state.keepStateMachineUpToDate();
                     return ApplyCommandResponse.of(true);
                 } else {
