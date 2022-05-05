@@ -63,8 +63,12 @@ public class BasicRaftTest {
         Simulation simulation = Simulation.create(0);
         List<InitializedServer> servers = createServers(simulation);
         simulation.advanceTime(Duration.ofMillis(60000));
+        long start = System.currentTimeMillis();
         int successCount = 0;
-        for (int i = 0; i < 100; i++) {
+        for (int i = 0; i < 10_000_000; i++) {
+            if (i % 10000 == 0) {
+                System.out.println((System.currentTimeMillis() - start) + " " + i);
+            }
             ApplyCommandRequest request = ApplyCommandRequest.of(
                     Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
             boolean roundSuccess = simulation

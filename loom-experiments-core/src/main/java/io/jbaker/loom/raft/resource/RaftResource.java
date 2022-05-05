@@ -193,8 +193,8 @@ public final class RaftResource implements RaftService, BackgroundTask {
                 leaderState.getNextIndices().put(server, LogIndexes.inc(lastLogEntry.getIndex()));
                 return;
             } else if (response.getTerm().equals(state.getPersistent().getCurrentTerm())) {
-                leaderState.getNextIndices().remove(server);
-                // leaderState.nextIndices.put(server, nextIndex.dec());
+                //leaderState.getNextIndices().remove(server);
+               leaderState.getNextIndices().put(server, LogIndex.of(Math.max(nextIndex.get() - 1, 1)));
             } else {
                 state.handleReceivedTerm(response.getTerm());
                 return;
@@ -271,18 +271,16 @@ public final class RaftResource implements RaftService, BackgroundTask {
             return false;
         }
 
+        int toSkip;
         List<LogEntry> overlapping = log.subList(prevLogIndex, log.size());
-        for (int i = 0; i < request.getEntries().size() && i < overlapping.size(); i++) {
-            if (!request.getEntries().get(i).equals(overlapping.get(i))) {
-                overlapping.subList(i, overlapping.size()).clear();
+        for (toSkip = 0; toSkip < request.getEntries().size() && toSkip < overlapping.size(); toSkip++) {
+            if (!request.getEntries().get(toSkip).equals(overlapping.get(toSkip))) {
+                overlapping.subList(toSkip, overlapping.size()).clear();
                 break;
             }
         }
 
-        log.addAll(request.getEntries()
-                .subList(
-                        request.getEntries().size() - (log.size() - prevLogIndex),
-                        request.getEntries().size()));
+        log.addAll(request.getEntries().subList(toSkip, request.getEntries().size()));
 
         if (request.getLeaderCommit().get()
                 > state.getVolatile().getCommitIndex().get()) {
