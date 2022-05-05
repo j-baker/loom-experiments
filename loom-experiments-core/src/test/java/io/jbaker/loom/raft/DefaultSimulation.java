@@ -93,7 +93,7 @@ final class DefaultSimulation implements Simulation {
     @Override
     public ExecutorService newExecutor(TimeDistribution delayDistribution) {
         // return Executors.newCachedThreadPool(newThreadFactory(delayDistribution));
-        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution);
+        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution, random);
     }
 
     @Override
@@ -107,7 +107,7 @@ final class DefaultSimulation implements Simulation {
     }
 
     private ThreadFactory newThreadFactory(String name, TimeDistribution delayDistribution) {
-        Executor executor = task -> scheduleNewTask(task, delayDistribution.sample());
+        Executor executor = task -> scheduleNewTask(task, delayDistribution.sample(random));
         return runnable ->
                 HackVirtualThreads.virtualThreadBuilderFor(executor).name(name).unstarted(runnable);
     }
@@ -120,7 +120,7 @@ final class DefaultSimulation implements Simulation {
     @Override
     public ScheduledExecutorService newScheduledExecutor(TimeDistribution timeDistribution) {
         // return Executors.newScheduledThreadPool(4, newThreadFactory(timeDistribution));
-        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, timeDistribution);
+        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, timeDistribution, random);
     }
 
     private QueuedTask scheduleNewTaskInVThread(Runnable task, Duration delay) {
@@ -129,7 +129,7 @@ final class DefaultSimulation implements Simulation {
             private boolean isFirst = true;
 
             @Override
-            public Duration sample() {
+            public Duration sample(Random _random) {
                 if (isFirst) {
                     isFirst = false;
                     return delay;
@@ -137,7 +137,7 @@ final class DefaultSimulation implements Simulation {
                 return Duration.ZERO;
             }
         };
-        Executor executor = t -> ref.set(scheduleNewTask(t, distribution.sample()));
+        Executor executor = t -> ref.set(scheduleNewTask(t, distribution.sample(random)));
         HackVirtualThreads.virtualThreadBuilderFor(executor).start(task);
         return ref.get();
     }
@@ -152,14 +152,17 @@ final class DefaultSimulation implements Simulation {
         private final Clock clock;
         private final BiFunction<Runnable, Duration, QueuedTask> scheduleNewTask;
         private final TimeDistribution timeDistribution;
+        private final Random random;
 
         private SimulatedExecutor(
                 Clock clock,
                 BiFunction<Runnable, Duration, QueuedTask> scheduleNewTask,
-                TimeDistribution timeDistribution) {
+                TimeDistribution timeDistribution,
+                Random random) {
             this.clock = clock;
             this.scheduleNewTask = scheduleNewTask;
             this.timeDistribution = timeDistribution;
+            this.random = random;
         }
 
         private QueuedTask scheduleNewTask(Runnable runnable, Duration duration) {
@@ -177,7 +180,7 @@ final class DefaultSimulation implements Simulation {
         }
 
         private <V> ScheduledFuture<V> schedule(Function<Executor, Future<V>> execute, long delay, TimeUnit unit) {
-            Duration duration = timeDistribution.sample().plus(delay, unit.toChronoUnit());
+            Duration duration = timeDistribution.sample(random).plus(delay, unit.toChronoUnit());
             CapturingExecutor executor = new CapturingExecutor();
             Future<V> rawFuture = execute.apply(executor);
             QueuedTask task = scheduleNewTask(executor.retrieve(), duration);
@@ -187,7 +190,7 @@ final class DefaultSimulation implements Simulation {
 
         @Override
         public void execute(Runnable command) {
-            scheduleNewTask(command, timeDistribution.sample());
+            scheduleNewTask(command, timeDistribution.sample(random));
         }
 
         @Override

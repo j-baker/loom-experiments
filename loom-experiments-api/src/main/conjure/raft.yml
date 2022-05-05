@@ -51,3 +51,24 @@ types:
       ApplyCommandResponse:
         fields:
           applied: boolean
+services:
+  RaftService:
+    name: Raft service
+    package: io.jbaker.loom.raft.api
+    base-path: /raft
+    endpoints:
+      appendEntries:
+        http: POST /ae
+        args:
+          request: AppendEntriesRequest
+        returns: AppendEntriesResponse
+      requestVote:
+        http: POST /rv
+        args:
+          request: RequestVoteRequest
+        returns: RequestVoteResponse
+      applyCommand:
+        http: POST /ac
+        args:
+          request: ApplyCommandRequest
+        returns: ApplyCommandResponse

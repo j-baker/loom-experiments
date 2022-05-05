@@ -9,19 +9,19 @@ import java.util.Random;
 
 @FunctionalInterface
 interface TimeDistribution {
-    Duration sample();
+    Duration sample(Random random);
 
     static TimeDistribution add(TimeDistribution left, TimeDistribution right) {
-        return () -> left.sample().plus(right.sample());
+        return random -> left.sample(random).plus(right.sample(random));
     }
 
     static TimeDistribution constant(Duration duration) {
-        return () -> duration;
+        return _random -> duration;
     }
 
-    static TimeDistribution uniform(Random random, Duration from, Duration to) {
+    static TimeDistribution uniform(Duration from, Duration to) {
         long fromNanos = from.toNanos();
         long toNanos = to.toNanos();
-        return () -> Duration.ofNanos(random.nextLong(fromNanos, toNanos));
+        return random -> Duration.ofNanos(random.nextLong(fromNanos, toNanos));
     }
 }

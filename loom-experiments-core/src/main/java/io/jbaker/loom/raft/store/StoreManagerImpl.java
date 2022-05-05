@@ -7,7 +7,7 @@ package io.jbaker.loom.raft.store;
 import static com.palantir.logsafe.Preconditions.checkState;
 
 import com.google.common.base.Throwables;
-import io.jbaker.loom.raft.Runtime;
+import io.jbaker.loom.raft.runtime.LanguageRuntime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.locks.Lock;
@@ -20,7 +20,7 @@ public final class StoreManagerImpl implements StoreManager {
     private final Lock lock;
     private final ServerState serverState;
 
-    public StoreManagerImpl(Runtime runtime, ServerState serverState) {
+    public StoreManagerImpl(LanguageRuntime runtime, ServerState serverState) {
         this.lock = runtime.newLock();
         this.serverState = serverState;
     }
