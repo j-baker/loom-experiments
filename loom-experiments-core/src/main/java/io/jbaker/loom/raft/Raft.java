@@ -6,7 +6,4 @@ package io.jbaker.loom.raft;
 
 public final class Raft {
     private Raft() {}
-
-
-
 }

@@ -39,7 +39,7 @@ import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 
-public class RaftResource implements RaftService, BackgroundTask {
+public final class RaftResource implements RaftService, BackgroundTask {
     private final ServerId me;
     private final StoreManager store;
     private final ServerConfig serverConfig;
@@ -50,10 +50,7 @@ public class RaftResource implements RaftService, BackgroundTask {
     private final int quorumSize;
 
     public RaftResource(
-            ServerConfig serverConfig,
-            StoreManager store,
-            Clock clock,
-            Map<ServerId, RaftServiceAsync> otherServers) {
+            ServerConfig serverConfig, StoreManager store, Clock clock, Map<ServerId, RaftServiceAsync> otherServers) {
         this.me = serverConfig.me();
         this.store = store;
         this.otherServers = Map.copyOf(Maps.filterKeys(otherServers, id -> !id.equals(serverConfig.me())));
@@ -86,7 +83,7 @@ public class RaftResource implements RaftService, BackgroundTask {
 
         if (ctx.state().getMode() == LeadershipMode.FOLLOWER
                 && (ctx.state().getLastUpdated() == null
-                || now.isAfter(ctx.state().getLastUpdated().plus(serverConfig.electionTimeout())))) {
+                        || now.isAfter(ctx.state().getLastUpdated().plus(serverConfig.electionTimeout())))) {
             ctx.state().setMode(LeadershipMode.CANDIDATE);
         }
 
@@ -270,7 +267,7 @@ public class RaftResource implements RaftService, BackgroundTask {
         int prevLogIndex = request.getPrevLogIndex().get();
         if (!request.getPrevLogIndex().equals(LogIndexes.ZERO)
                 && (log.size() <= prevLogIndex
-                || !log.get(prevLogIndex).getTerm().equals(request.getPrevLogTerm()))) {
+                        || !log.get(prevLogIndex).getTerm().equals(request.getPrevLogTerm()))) {
             return false;
         }
 
@@ -323,8 +320,7 @@ public class RaftResource implements RaftService, BackgroundTask {
         LogEntryMetadata ourLast = state.getPersistent().lastLogEntry();
         if (request.getLastLogIndex().get() < ourLast.getIndex().get()
                 || (request.getLastLogIndex().get() == ourLast.getIndex().get()
-                && request.getLastLogTerm().get()
-                < ourLast.getTerm().get())) {
+                        && request.getLastLogTerm().get() < ourLast.getTerm().get())) {
             return false;
         }
         state.getPersistent().setVotedFor(Optional.of(request.getCandidateId()));
@@ -340,11 +336,8 @@ public class RaftResource implements RaftService, BackgroundTask {
             LogEntryMetadata entry = ctx.state().getPersistent().addEntryAsLeader(request.getData());
             ensureFollowersUpToDate(ctx);
             if (ctx.state().getVolatile().getCommitIndex().get()
-                    >= entry.getIndex().get()
-                    && ctx.state()
-                    .getPersistent()
-                    .logMetadata(entry.getIndex())
-                    .equals(entry)) {
+                            >= entry.getIndex().get()
+                    && ctx.state().getPersistent().logMetadata(entry.getIndex()).equals(entry)) {
                 ctx.state().keepStateMachineUpToDate();
                 return ApplyCommandResponse.of(true);
             } else {

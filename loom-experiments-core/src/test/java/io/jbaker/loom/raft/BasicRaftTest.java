@@ -51,10 +51,9 @@ public class BasicRaftTest {
                 simulation,
                 3,
                 counters.iterator()::next,
-                new BackgroundTaskRunner(simulation.newScheduledExecutor(
-                        TimeDistribution.uniform(Duration.ZERO, Duration.ofMillis(1)))),
-                simulation.newExecutor(
-                        TimeDistribution.uniform(Duration.ofMillis(1), Duration.ofMillis(10))),
+                new BackgroundTaskRunner(
+                        simulation.newScheduledExecutor(TimeDistribution.uniform(Duration.ZERO, Duration.ofMillis(1)))),
+                simulation.newExecutor(TimeDistribution.uniform(Duration.ofMillis(1), Duration.ofMillis(10))),
                 simulation.clock());
         return servers;
     }
