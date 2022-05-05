@@ -9,8 +9,7 @@ import static com.palantir.logsafe.Preconditions.checkArgument;
 import io.jbaker.loom.raft.api.LogIndex;
 
 public final class LogIndexes {
-    private LogIndexes() {
-    }
+    private LogIndexes() {}
 
     public static final LogIndex ZERO = LogIndex.of(0);
     public static final LogIndex ONE = LogIndex.of(1);

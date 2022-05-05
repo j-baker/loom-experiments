@@ -9,10 +9,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import com.google.common.collect.MoreCollectors;
 import com.palantir.conjure.java.lib.Bytes;
 import io.jbaker.loom.raft.Raft.InitializedServer;
-import io.jbaker.loom.raft.Raft.StateMachine;
 import io.jbaker.loom.raft.api.ApplyCommandRequest;
 import io.jbaker.loom.raft.api.Command;
 import io.jbaker.loom.raft.api.LogEntry;
+import io.jbaker.loom.raft.store.StateMachine;
 import io.jbaker.loom.raft.util.BackgroundTask;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
@@ -25,10 +25,13 @@ public class BasicRaftTest {
 
     private static List<InitializedServer> createServers(Simulation simulation) {
         List<Counter> counters = List.of(new Counter(), new Counter(), new Counter());
-        List<InitializedServer> servers = Raft.create(3, counters.iterator()::next, new BackgroundTaskRunner(simulation.newScheduledExecutor(TimeDistribution.uniform(simulation.random(),
-                        Duration.ZERO, Duration.ofMillis(1)))),
-                simulation.newExecutor(TimeDistribution.uniform(simulation.random(), Duration.ofMillis(1),
-                        Duration.ofMillis(10))),
+        List<InitializedServer> servers = Raft.create(
+                3,
+                counters.iterator()::next,
+                new BackgroundTaskRunner(simulation.newScheduledExecutor(
+                        TimeDistribution.uniform(simulation.random(), Duration.ZERO, Duration.ofMillis(1)))),
+                simulation.newExecutor(
+                        TimeDistribution.uniform(simulation.random(), Duration.ofMillis(1), Duration.ofMillis(10))),
                 simulation.clock());
         return servers;
     }
@@ -40,12 +43,14 @@ public class BasicRaftTest {
         simulation.advanceTime(Duration.ofMillis(60000));
         int successCount = 0;
         for (int i = 0; i < 100; i++) {
-            ApplyCommandRequest request =
-                    ApplyCommandRequest.of(Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
-            boolean roundSuccess = simulation.runUntilComplete(servers.stream()
+            ApplyCommandRequest request = ApplyCommandRequest.of(
+                    Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
+            boolean roundSuccess = simulation
+                    .runUntilComplete(servers.stream()
                             .filter(InitializedServer::isLeader)
-                    .collect(MoreCollectors.onlyElement())
-                    .client().applyCommand(request))
+                            .collect(MoreCollectors.onlyElement())
+                            .client()
+                            .applyCommand(request))
                     .getApplied();
             successCount += roundSuccess ? 1 : 0;
         }

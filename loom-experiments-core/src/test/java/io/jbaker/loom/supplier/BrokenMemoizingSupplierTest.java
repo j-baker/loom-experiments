@@ -27,8 +27,8 @@ public class BrokenMemoizingSupplierTest {
     @MethodSource("range")
     void testAllCases(int seed) {
         AtomicInteger countCalls = new AtomicInteger();
-        BrokenMemoizingSupplier<Integer> supplier = new BrokenMemoizingSupplier<>(
-                new YieldingLock(), countCalls::incrementAndGet);
+        BrokenMemoizingSupplier<Integer> supplier =
+                new BrokenMemoizingSupplier<>(new YieldingLock(), countCalls::incrementAndGet);
         Random random = new Random(seed);
         RandomizingExecutor executor = new RandomizingExecutor(random);
         newVirtualThread(executor, supplier::get);

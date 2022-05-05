@@ -92,7 +92,7 @@ final class DefaultSimulation implements Simulation {
 
     @Override
     public ExecutorService newExecutor(TimeDistribution delayDistribution) {
-       // return Executors.newCachedThreadPool(newThreadFactory(delayDistribution));
+        // return Executors.newCachedThreadPool(newThreadFactory(delayDistribution));
         return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution);
     }
 
@@ -108,7 +108,8 @@ final class DefaultSimulation implements Simulation {
 
     private ThreadFactory newThreadFactory(String name, TimeDistribution delayDistribution) {
         Executor executor = task -> scheduleNewTask(task, delayDistribution.sample());
-        return runnable -> HackVirtualThreads.virtualThreadBuilderFor(executor).name(name).unstarted(runnable);
+        return runnable ->
+                HackVirtualThreads.virtualThreadBuilderFor(executor).name(name).unstarted(runnable);
     }
 
     @Override
@@ -118,7 +119,7 @@ final class DefaultSimulation implements Simulation {
 
     @Override
     public ScheduledExecutorService newScheduledExecutor(TimeDistribution timeDistribution) {
-        //return Executors.newScheduledThreadPool(4, newThreadFactory(timeDistribution));
+        // return Executors.newScheduledThreadPool(4, newThreadFactory(timeDistribution));
         return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, timeDistribution);
     }
 
@@ -126,6 +127,7 @@ final class DefaultSimulation implements Simulation {
         AtomicReference<QueuedTask> ref = new AtomicReference<>();
         TimeDistribution distribution = new TimeDistribution() {
             private boolean isFirst = true;
+
             @Override
             public Duration sample() {
                 if (isFirst) {
@@ -175,8 +177,7 @@ final class DefaultSimulation implements Simulation {
         }
 
         private <V> ScheduledFuture<V> schedule(Function<Executor, Future<V>> execute, long delay, TimeUnit unit) {
-            Duration duration =
-                    timeDistribution.sample().plus(delay, unit.toChronoUnit());
+            Duration duration = timeDistribution.sample().plus(delay, unit.toChronoUnit());
             CapturingExecutor executor = new CapturingExecutor();
             Future<V> rawFuture = execute.apply(executor);
             QueuedTask task = scheduleNewTask(executor.retrieve(), duration);
@@ -190,20 +191,13 @@ final class DefaultSimulation implements Simulation {
         }
 
         @Override
-        public ScheduledFuture<?> scheduleAtFixedRate(
-                Runnable command,
-                long initialDelay,
-                long period,
-                TimeUnit unit) {
+        public ScheduledFuture<?> scheduleAtFixedRate(Runnable command, long initialDelay, long period, TimeUnit unit) {
             throw new UnsupportedOperationException();
         }
 
         @Override
         public ScheduledFuture<?> scheduleWithFixedDelay(
-                Runnable command,
-                long initialDelay,
-                long delay,
-                TimeUnit unit) {
+                Runnable command, long initialDelay, long delay, TimeUnit unit) {
             throw new UnsupportedOperationException();
         }
 

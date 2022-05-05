@@ -14,7 +14,9 @@ import java.util.concurrent.ThreadFactory;
 
 public sealed interface Simulation permits DefaultSimulation {
     Clock clock();
+
     ScheduledExecutorService newScheduledExecutor(TimeDistribution timeDistribution);
+
     ExecutorService newExecutor(TimeDistribution delayDistribution);
 
     Random random();
@@ -22,6 +24,7 @@ public sealed interface Simulation permits DefaultSimulation {
     ThreadFactory newThreadFactory(TimeDistribution delayDistribution);
 
     void advanceTime(Duration duration);
+
     void runUntilIdle();
 
     <V> V runUntilComplete(Future<V> future);

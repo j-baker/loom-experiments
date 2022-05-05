@@ -15,11 +15,11 @@ dependencies {
 
 
 tasks.withType(JavaCompile) {
-  options.compilerArgs += "--enable-preview"
+  options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
 }
 tasks.withType(Test) {
-  jvmArgs += "--enable-preview"
+  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
 }
 tasks.withType(JavaExec) {
-  jvmArgs += "--enable-preview"
+  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
 }

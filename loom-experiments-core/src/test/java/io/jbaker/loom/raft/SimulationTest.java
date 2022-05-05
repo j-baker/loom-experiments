@@ -35,6 +35,5 @@ public class SimulationTest {
         Future<?> future = executor.schedule(() -> {}, delay.toMillis(), TimeUnit.MILLISECONDS);
         simulation.runUntilComplete(future);
         assertThat(Duration.between(now, simulation.clock().instant())).isEqualTo(delay);
-
     }
 }

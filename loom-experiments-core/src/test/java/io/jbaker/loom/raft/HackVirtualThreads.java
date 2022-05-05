@@ -21,7 +21,7 @@ public final class HackVirtualThreads {
     public static Thread.Builder.OfVirtual virtualThreadBuilderFor(Executor executor) {
         try {
             Thread.Builder.OfVirtual builder = Thread.ofVirtual();
-            Class<?> clazz = Class.forName( "java.lang.ThreadBuilders$VirtualThreadBuilder");
+            Class<?> clazz = Class.forName("java.lang.ThreadBuilders$VirtualThreadBuilder");
             Field scheduler = clazz.getDeclaredField("scheduler");
             scheduler.setAccessible(true);
             scheduler.set(builder, executor);
