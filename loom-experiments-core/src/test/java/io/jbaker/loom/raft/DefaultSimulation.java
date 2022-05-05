@@ -9,6 +9,8 @@ import static com.palantir.logsafe.Preconditions.checkState;
 
 import com.google.common.util.concurrent.ForwardingFuture;
 import com.google.common.util.concurrent.Futures;
+import com.palantir.logsafe.logger.SafeLogger;
+import com.palantir.logsafe.logger.SafeLoggerFactory;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -33,6 +35,7 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 final class DefaultSimulation implements Simulation {
+    private static final SafeLogger log = SafeLoggerFactory.get(DefaultSimulation.class);
     private final Random random;
 
     private final PriorityQueue<QueuedTask> taskQueue = new PriorityQueue<>();
@@ -57,7 +60,7 @@ final class DefaultSimulation implements Simulation {
         try {
             maybeTask.task.run();
         } catch (RuntimeException e) {
-            e.printStackTrace();
+            log.info("caught exception while running task, swallowing", e);
         }
         return !taskQueue.isEmpty();
     }

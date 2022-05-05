@@ -7,8 +7,9 @@ package io.jbaker.loom.raft.resource;
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
-import com.google.errorprone.annotations.concurrent.GuardedBy;
 import com.palantir.logsafe.exceptions.SafeIllegalStateException;
+import com.palantir.logsafe.logger.SafeLogger;
+import com.palantir.logsafe.logger.SafeLoggerFactory;
 import io.jbaker.loom.raft.api.AppendEntriesRequest;
 import io.jbaker.loom.raft.api.AppendEntriesResponse;
 import io.jbaker.loom.raft.api.ApplyCommandRequest;
@@ -40,6 +41,8 @@ import java.util.concurrent.ExecutionException;
 import java.util.function.Supplier;
 
 public final class RaftResource implements RaftService, BackgroundTask {
+    private final SafeLogger log = SafeLoggerFactory.get(RaftResource.class);
+
     private final ServerId me;
     private final StoreManager store;
     private final ServerConfig serverConfig;
@@ -130,8 +133,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
                     AppendEntriesResponse response = future.get();
                     defer.callback(state -> state.handleReceivedTerm(response.getTerm()));
                 } catch (ExecutionException e) {
-                    e.printStackTrace();
-                    // TODO(jbaker): log
+                    log.warn("rpc failed", e);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException(e);
@@ -185,18 +187,29 @@ public final class RaftResource implements RaftService, BackgroundTask {
                     .entries(logEntries)
                     .build();
 
-            AppendEntriesResponse response = ctx.callStateful(
-                    _defer -> Futures.getUnchecked(otherServers.get(server).appendEntries(request)));
+            Optional<AppendEntriesResponse> response = ctx.callStateful(
+                    _defer -> {
+                        try {
+                            return Optional.of(otherServers.get(server).appendEntries(request).get());
+                        } catch (ExecutionException _e) {
+                            return Optional.empty();
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            throw new RuntimeException(e);
+                        }
+                    });
+            if (response.isEmpty()) {
+                return;
+            }
             // races?
-            if (response.getSuccess()) {
+            if (response.get().getSuccess()) {
                 leaderState.getMatchIndices().put(server, lastLogEntry.getIndex());
                 leaderState.getNextIndices().put(server, LogIndexes.inc(lastLogEntry.getIndex()));
                 return;
-            } else if (response.getTerm().equals(state.getPersistent().getCurrentTerm())) {
-                //leaderState.getNextIndices().remove(server);
-               leaderState.getNextIndices().put(server, LogIndex.of(Math.max(nextIndex.get() - 1, 1)));
+            } else if (response.get().getTerm().equals(state.getPersistent().getCurrentTerm())) {
+                leaderState.getNextIndices().put(server, LogIndex.of(Math.max(nextIndex.get() - 1, 1)));
             } else {
-                state.handleReceivedTerm(response.getTerm());
+                state.handleReceivedTerm(response.get().getTerm());
                 return;
             }
         }
@@ -233,8 +246,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
                         votesCollected++;
                     }
                 } catch (ExecutionException e) {
-                    e.printStackTrace();
-                    // TODO(jbaker): Log
+                    log.warn("rpc failed", e);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                     throw new RuntimeException(e);
@@ -255,24 +267,22 @@ public final class RaftResource implements RaftService, BackgroundTask {
         });
     }
 
-    @GuardedBy("state")
-    @SuppressWarnings("CyclomaticComplexity")
     private boolean appendEntries(ServerState state, AppendEntriesRequest request) {
         if (request.getTerm().get() < state.getPersistent().getCurrentTerm().get()) {
             return false;
         }
 
-        List<LogEntry> log = state.getPersistent().getLog();
+        List<LogEntry> ourLog = state.getPersistent().getLog();
 
         int prevLogIndex = request.getPrevLogIndex().get();
         if (!request.getPrevLogIndex().equals(LogIndexes.ZERO)
-                && (log.size() <= prevLogIndex
-                        || !log.get(prevLogIndex).getTerm().equals(request.getPrevLogTerm()))) {
+                && (ourLog.size() <= prevLogIndex
+                        || !ourLog.get(prevLogIndex).getTerm().equals(request.getPrevLogTerm()))) {
             return false;
         }
 
         int toSkip;
-        List<LogEntry> overlapping = log.subList(prevLogIndex, log.size());
+        List<LogEntry> overlapping = ourLog.subList(prevLogIndex, ourLog.size());
         for (toSkip = 0; toSkip < request.getEntries().size() && toSkip < overlapping.size(); toSkip++) {
             if (!request.getEntries().get(toSkip).equals(overlapping.get(toSkip))) {
                 overlapping.subList(toSkip, overlapping.size()).clear();
@@ -280,13 +290,13 @@ public final class RaftResource implements RaftService, BackgroundTask {
             }
         }
 
-        log.addAll(request.getEntries().subList(toSkip, request.getEntries().size()));
+        ourLog.addAll(request.getEntries().subList(toSkip, request.getEntries().size()));
 
         if (request.getLeaderCommit().get()
                 > state.getVolatile().getCommitIndex().get()) {
             state.getVolatile()
                     .setCommitIndex(
-                            LogIndex.of(Math.min(request.getLeaderCommit().get(), log.size() - 1)));
+                            LogIndex.of(Math.min(request.getLeaderCommit().get(), ourLog.size() - 1)));
         }
 
         state.setLastUpdated(clock.instant());

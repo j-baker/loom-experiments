@@ -15,6 +15,10 @@ interface TimeDistribution {
         return random -> left.sample(random).plus(right.sample(random));
     }
 
+    static TimeDistribution zero() {
+        return constant(Duration.ZERO);
+    }
+
     static TimeDistribution constant(Duration duration) {
         return _random -> duration;
     }
