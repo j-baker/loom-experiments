@@ -1,0 +1,74 @@
+types:
+  definitions:
+    default-package: io.jbaker.loom.raft.api
+    objects:
+      Command:
+        alias: binary
+      ServerId:
+        alias: uuid
+      TermId:
+        alias: integer
+      LogIndex:
+        alias: integer
+      LogEntry:
+        fields:
+          term: TermId
+          data: Command
+      LogEntryMetadata:
+        fields:
+          term: TermId
+          index: LogIndex
+      LeadershipMode:
+        values:
+          - FOLLOWER
+          - CANDIDATE
+          - LEADER
+      AppendEntriesRequest:
+        fields:
+          term: TermId
+          leaderId: ServerId
+          prevLogIndex: LogIndex
+          prevLogTerm: TermId
+          entries: list<LogEntry>
+          leaderCommit: LogIndex
+      AppendEntriesResponse:
+        fields:
+          term: TermId
+          success: boolean
+      RequestVoteRequest:
+        fields:
+          term: TermId
+          candidateId: ServerId
+          lastLogIndex: LogIndex
+          lastLogTerm: TermId
+      RequestVoteResponse:
+        fields:
+          term: TermId
+          voteGranted: boolean
+      ApplyCommandRequest:
+        fields:
+          data: Command
+      ApplyCommandResponse:
+        fields:
+          applied: boolean
+services:
+  RaftService:
+    name: Raft service
+    package: io.jbaker.loom.raft.api
+    base-path: /raft
+    endpoints:
+      appendEntries:
+        http: POST /ae
+        args:
+          request: AppendEntriesRequest
+        returns: AppendEntriesResponse
+      requestVote:
+        http: POST /rv
+        args:
+          request: RequestVoteRequest
+        returns: RequestVoteResponse
+      applyCommand:
+        http: POST /ac
+        args:
+          request: ApplyCommandRequest
+        returns: ApplyCommandResponse

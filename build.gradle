@@ -8,8 +8,10 @@ buildscript {
         classpath 'com.github.ben-manes:gradle-versions-plugin:0.42.0'
         classpath 'com.palantir.javaformat:gradle-palantir-java-format:2.22.0'
         classpath 'com.palantir.baseline:gradle-baseline-java:4.105.0'
+        classpath 'com.palantir.gradle.conjure:gradle-conjure:5.23.0'
         classpath 'com.palantir.gradle.gitversion:gradle-git-version:0.15.0'
         classpath 'gradle.plugin.org.inferred:gradle-processors:3.6.0'
+        classpath 'gradle.plugin.org.jetbrains.gradle.plugin.idea-ext:gradle-idea-ext:1.1.4'
     }
 }
 
@@ -18,13 +20,14 @@ plugins {
 }
 
 apply plugin: 'com.github.ben-manes.versions'
-apply plugin: 'com.palantir.baseline'
-apply plugin: 'com.palantir.git-version'
 apply plugin: 'com.palantir.baseline-java-versions'
+apply plugin: 'com.palantir.git-version'
+apply plugin: "org.jetbrains.gradle.plugin.idea-ext"
+
 
 javaVersions {
-    libraryTarget = 17
-    runtime = 17
+    libraryTarget = 19
+    runtime = 19
 }
 
 allprojects {
@@ -39,10 +42,42 @@ allprojects {
 }
 
 subprojects {
+    // baseline-error-prone is currently not compatible
+    //apply plugin: 'com.palantir.baseline'
+    apply plugin: 'com.palantir.baseline-enable-preview-flag'
+    apply plugin: 'com.palantir.baseline-checkstyle'
+    apply plugin: 'com.palantir.baseline-scala'
+    apply plugin: 'com.palantir.baseline-eclipse'
+    apply plugin: 'com.palantir.baseline-idea'
+    apply plugin: 'com.palantir.baseline-format'
+    apply plugin: 'com.palantir.baseline-encoding'
+    apply plugin: 'com.palantir.baseline-reproducibility'
+    apply plugin: 'com.palantir.baseline-class-uniqueness'
+    apply plugin: 'com.palantir.baseline-exact-dependencies'
+    apply plugin: 'com.palantir.baseline-release-compatibility'
+    apply plugin: 'com.palantir.baseline-testing'
+    apply plugin: 'com.palantir.baseline-test-heap'
+    apply plugin: 'com.palantir.baseline-java-compiler-diagnostics'
+    apply plugin: 'com.palantir.baseline-java-properties'
+    apply plugin: 'com.palantir.baseline-immutables'
+    apply plugin: 'com.palantir.baseline-module-jvm-args'
+    apply plugin: 'com.palantir.baseline-prefer-project-modules'
     apply plugin: 'java-library'
     apply plugin: 'org.inferred.processors'
 
-    tasks.withType(JavaCompile) {
-        options.compilerArgs += ['-Werror']
+    dependencies {
+        testImplementation 'org.junit.jupiter:junit-jupiter'
+        testImplementation 'org.junit.jupiter:junit-jupiter-api'
+        testImplementation 'org.assertj:assertj-core'
+        testImplementation 'org.mockito:mockito-core'
+        testImplementation 'org.mockito:mockito-junit-jupiter'
+    }
+}
+
+idea.project.settings {
+    compiler {
+        javac {
+            javacAdditionalOptions "--enable-preview"
+        }
     }
 }
