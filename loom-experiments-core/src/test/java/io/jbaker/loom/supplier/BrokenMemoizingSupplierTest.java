@@ -6,7 +6,7 @@ package io.jbaker.loom.supplier;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.jbaker.loom.raft.HackVirtualThreads;
+import io.jbaker.loom.raft.simulation.HackVirtualThreads;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;

@@ -2,7 +2,7 @@
  * (c) Copyright 2022 Palantir Technologies Inc. All rights reserved.
  */
 
-package io.jbaker.loom.raft;
+package io.jbaker.loom.raft.simulation;
 
 import java.lang.reflect.Field;
 import java.util.concurrent.Executor;

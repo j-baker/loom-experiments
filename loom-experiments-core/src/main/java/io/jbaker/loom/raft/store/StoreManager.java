@@ -15,9 +15,9 @@ public interface StoreManager {
     interface Ctx {
         ServerState state();
 
-        void runStateful(Consumer<Defer> task);
+        void runRemote(Consumer<Defer> task);
 
-        <R> R callStateful(Function<Defer, R> task);
+        <R> R callRemote(Function<Defer, R> task);
     }
 
     interface Defer {

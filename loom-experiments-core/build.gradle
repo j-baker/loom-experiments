@@ -9,6 +9,8 @@ dependencies {
 
   compileOnly 'org.immutables:value::annotations'
 
+  testImplementation 'io.dropwizard.metrics:metrics-core'
+
   annotationProcessor 'com.palantir.conjure.java:conjure-undertow-processor'
   annotationProcessor 'com.palantir.dialogue:dialogue-annotations'
   annotationProcessor 'org.immutables:value'
@@ -19,7 +21,8 @@ tasks.withType(JavaCompile) {
   options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
 }
 tasks.withType(Test) {
-  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
+  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent",
+  "-Xms96g", "-Xmx96g","-XX:+UseParallelGC", "-XX:FlightRecorderOptions=stackdepth=200", "-XX:NewSize=80g", "-XX:MaxNewSize=80g"]//"-agentpath:/home/james/Downloads/YourKit-JavaProfiler-2022.3/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,probe_disable=*,_no_java_version_check"]
 }
 tasks.withType(JavaExec) {
   jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]

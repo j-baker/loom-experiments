@@ -5,7 +5,8 @@
 package io.jbaker.loom.raft.store;
 
 import io.jbaker.loom.raft.api.LogEntry;
+import io.jbaker.loom.raft.api.LogIndex;
 
 public interface StateMachine {
-    void apply(LogEntry entry);
+    void apply(LogIndex logIndex, LogEntry entry);
 }

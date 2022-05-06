@@ -2,7 +2,7 @@
  * (c) Copyright 2022 Palantir Technologies Inc. All rights reserved.
  */
 
-package io.jbaker.loom.raft;
+package io.jbaker.loom.raft.simulation;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static com.palantir.logsafe.Preconditions.checkState;
@@ -42,12 +42,12 @@ final class DefaultSimulation implements Simulation {
 
     private Instant now = Instant.EPOCH;
 
+    private long taskId = 0;
+
     private final Clock clock = new SupplierClock(() -> now);
 
     DefaultSimulation(Random random) {
         this.random = random;
-        // HackVirtualThreads.setup(new SimulatedExecutor(clock,
-        //          this::scheduleNewTask, TimeDistribution.constant(Duration.ZERO)));
     }
 
     @Override
@@ -63,13 +63,6 @@ final class DefaultSimulation implements Simulation {
             log.info("caught exception while running task, swallowing", e);
         }
         return !taskQueue.isEmpty();
-    }
-
-    @Override
-    public void runUntilIdle() {
-        while (runNextTask()) {
-            // empty body
-        }
     }
 
     @Override
@@ -94,7 +87,7 @@ final class DefaultSimulation implements Simulation {
     }
 
     @Override
-    public ExecutorService newExecutor(TimeDistribution delayDistribution) {
+    public ExecutorService newExecutor(DelayDistribution delayDistribution) {
         // return Executors.newCachedThreadPool(newThreadFactory(delayDistribution));
         return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution, random);
     }
@@ -104,15 +97,15 @@ final class DefaultSimulation implements Simulation {
         return random;
     }
 
-    @Override
-    public ThreadFactory newThreadFactory(TimeDistribution delayDistribution) {
-        return newThreadFactory("thread", delayDistribution);
-    }
-
-    private ThreadFactory newThreadFactory(String name, TimeDistribution delayDistribution) {
+    private ThreadFactory newThreadFactory(String name, DelayDistribution delayDistribution) {
         Executor executor = task -> scheduleNewTask(task, delayDistribution.sample(random));
         return runnable ->
                 HackVirtualThreads.virtualThreadBuilderFor(executor).name(name).unstarted(runnable);
+    }
+
+    @Override
+    public long getTaskCount() {
+        return taskId;
     }
 
     @Override
@@ -121,14 +114,14 @@ final class DefaultSimulation implements Simulation {
     }
 
     @Override
-    public ScheduledExecutorService newScheduledExecutor(TimeDistribution timeDistribution) {
+    public ScheduledExecutorService newScheduledExecutor(DelayDistribution delayDistribution) {
         // return Executors.newScheduledThreadPool(4, newThreadFactory(timeDistribution));
-        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, timeDistribution, random);
+        return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution, random);
     }
 
     private QueuedTask scheduleNewTaskInVThread(Runnable task, Duration delay) {
         AtomicReference<QueuedTask> ref = new AtomicReference<>();
-        TimeDistribution distribution = new TimeDistribution() {
+        DelayDistribution distribution = new DelayDistribution() {
             private boolean isFirst = true;
 
             @Override
@@ -146,7 +139,7 @@ final class DefaultSimulation implements Simulation {
     }
 
     private QueuedTask scheduleNewTask(Runnable task, Duration delay) {
-        QueuedTask queued = new QueuedTask(delay.isNegative() ? now : now.plus(delay), task, random.nextLong());
+        QueuedTask queued = new QueuedTask(delay.isNegative() ? now : now.plus(delay), task, taskId++);
         taskQueue.add(queued);
         return queued;
     }
@@ -154,17 +147,17 @@ final class DefaultSimulation implements Simulation {
     private static final class SimulatedExecutor extends AbstractExecutorService implements ScheduledExecutorService {
         private final Clock clock;
         private final BiFunction<Runnable, Duration, QueuedTask> scheduleNewTask;
-        private final TimeDistribution timeDistribution;
+        private final DelayDistribution delayDistribution;
         private final Random random;
 
         private SimulatedExecutor(
                 Clock clock,
                 BiFunction<Runnable, Duration, QueuedTask> scheduleNewTask,
-                TimeDistribution timeDistribution,
+                DelayDistribution delayDistribution,
                 Random random) {
             this.clock = clock;
             this.scheduleNewTask = scheduleNewTask;
-            this.timeDistribution = timeDistribution;
+            this.delayDistribution = delayDistribution;
             this.random = random;
         }
 
@@ -183,7 +176,7 @@ final class DefaultSimulation implements Simulation {
         }
 
         private <V> ScheduledFuture<V> schedule(Function<Executor, Future<V>> execute, long delay, TimeUnit unit) {
-            Duration duration = timeDistribution.sample(random).plus(delay, unit.toChronoUnit());
+            Duration duration = delayDistribution.sample(random).plus(delay, unit.toChronoUnit());
             CapturingExecutor executor = new CapturingExecutor();
             Future<V> rawFuture = execute.apply(executor);
             QueuedTask task = scheduleNewTask(executor.retrieve(), duration);
@@ -193,7 +186,7 @@ final class DefaultSimulation implements Simulation {
 
         @Override
         public void execute(Runnable command) {
-            scheduleNewTask(command, timeDistribution.sample(random));
+            scheduleNewTask(command, delayDistribution.sample(random));
         }
 
         @Override

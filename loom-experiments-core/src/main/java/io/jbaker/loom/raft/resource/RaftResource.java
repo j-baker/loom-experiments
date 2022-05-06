@@ -4,12 +4,16 @@
 
 package io.jbaker.loom.raft.resource;
 
+import static java.util.stream.Collectors.toUnmodifiableList;
+
 import com.google.common.collect.Maps;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
+import com.google.common.util.concurrent.ListeningExecutorService;
 import com.palantir.logsafe.exceptions.SafeIllegalStateException;
 import com.palantir.logsafe.logger.SafeLogger;
 import com.palantir.logsafe.logger.SafeLoggerFactory;
+import io.jbaker.loom.Hooks;
 import io.jbaker.loom.raft.api.AppendEntriesRequest;
 import io.jbaker.loom.raft.api.AppendEntriesResponse;
 import io.jbaker.loom.raft.api.ApplyCommandRequest;
@@ -33,7 +37,6 @@ import io.jbaker.loom.raft.util.LogIndexes;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -49,13 +52,22 @@ public final class RaftResource implements RaftService, BackgroundTask {
     private final Clock clock;
 
     private final Map<ServerId, RaftServiceAsync> otherServers;
+    private final ListeningExecutorService executor;
+    private final Hooks hooks;
 
     private final int quorumSize;
 
     public RaftResource(
-            ServerConfig serverConfig, StoreManager store, Clock clock, Map<ServerId, RaftServiceAsync> otherServers) {
+            ServerConfig serverConfig,
+            StoreManager store,
+            Clock clock,
+            Map<ServerId, RaftServiceAsync> otherServers,
+            ListeningExecutorService executor,
+            Hooks hooks) {
         this.me = serverConfig.me();
         this.store = store;
+        this.executor = executor;
+        this.hooks = hooks;
         this.otherServers = Map.copyOf(Maps.filterKeys(otherServers, id -> !id.equals(serverConfig.me())));
         this.serverConfig = serverConfig;
         this.clock = clock;
@@ -94,6 +106,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
             boolean wonElection = tryToWinElection(ctx);
             if (wonElection && ctx.state().getMode() == LeadershipMode.CANDIDATE) {
                 ctx.state().setMode(LeadershipMode.LEADER);
+                hooks.onNewLeader(ctx.state().getPersistent().getCurrentTerm(), me);
             }
         }
         if (ctx.state().getLeadershipMode() == LeadershipMode.LEADER) {
@@ -105,27 +118,29 @@ public final class RaftResource implements RaftService, BackgroundTask {
     }
 
     private void sendNoOpUpdates(StoreManager.Ctx ctx) {
-        List<Supplier<ListenableFuture<AppendEntriesResponse>>> suppliers = new ArrayList<>();
         if (ctx.state().getMode() != LeadershipMode.LEADER) {
             return;
         }
-        otherServers.forEach((serverId, client) -> {
-            LogEntryMetadata logEntryMetadata = ctx.state()
-                    .getPersistent()
-                    .logMetadata(ctx.state()
-                            .getLeaderVolatile()
-                            .get()
-                            .getMatchIndices()
-                            .getOrDefault(serverId, LogIndexes.ZERO));
-            suppliers.add(() -> client.appendEntries(AppendEntriesRequest.builder()
-                    .leaderId(ctx.state().getPersistent().getMe())
-                    .term(ctx.state().getPersistent().getCurrentTerm())
-                    .leaderCommit(ctx.state().getVolatile().getCommitIndex())
-                    .prevLogTerm(logEntryMetadata.getTerm())
-                    .prevLogIndex(logEntryMetadata.getIndex())
-                    .build()));
-        });
-        ctx.runStateful(defer -> {
+        List<Supplier<ListenableFuture<AppendEntriesResponse>>> suppliers = otherServers.entrySet().stream()
+                .map(entry -> {
+                    LogEntryMetadata logEntryMetadata = ctx.state()
+                            .getPersistent()
+                            .logMetadata(ctx.state()
+                                    .getLeaderVolatile()
+                                    .get()
+                                    .getMatchIndices()
+                                    .getOrDefault(entry.getKey(), LogIndexes.ZERO));
+                    return (Supplier<ListenableFuture<AppendEntriesResponse>>) () -> entry.getValue()
+                            .appendEntries(AppendEntriesRequest.builder()
+                                    .leaderId(ctx.state().getPersistent().getMe())
+                                    .term(ctx.state().getPersistent().getCurrentTerm())
+                                    .leaderCommit(ctx.state().getVolatile().getCommitIndex())
+                                    .prevLogTerm(logEntryMetadata.getTerm())
+                                    .prevLogIndex(logEntryMetadata.getIndex())
+                                    .build());
+                })
+                .toList();
+        ctx.runRemote(defer -> {
             // TODO(jbaker): refactor to use vthreads for this...
             for (ListenableFuture<AppendEntriesResponse> future :
                     suppliers.stream().map(Supplier::get).toList()) {
@@ -143,9 +158,17 @@ public final class RaftResource implements RaftService, BackgroundTask {
     }
 
     private void ensureFollowersUpToDate(StoreManager.Ctx ctx) {
-        // TODO(jbaker): run this in vthreads
-        otherServers.keySet().forEach(id -> ensureFollowerUpToDate(ctx, id));
+        ctx.runRemote(_defer -> {
+            List<ListenableFuture<?>> futures = otherServers.keySet().stream()
+                    .map(this::ensureFollowerUpToDateAsync)
+                    .collect(toUnmodifiableList());
+            futures.forEach(Futures::getUnchecked);
+        });
         ctx.state().updateLeaderCommitIndex(otherServers.keySet());
+    }
+
+    private ListenableFuture<?> ensureFollowerUpToDateAsync(ServerId server) {
+        return executor.submit(() -> store.run(c -> ensureFollowerUpToDate(c, server)));
     }
 
     private void ensureFollowerUpToDate(StoreManager.Ctx ctx, ServerId server) {
@@ -187,17 +210,17 @@ public final class RaftResource implements RaftService, BackgroundTask {
                     .entries(logEntries)
                     .build();
 
-            Optional<AppendEntriesResponse> response = ctx.callStateful(
-                    _defer -> {
-                        try {
-                            return Optional.of(otherServers.get(server).appendEntries(request).get());
-                        } catch (ExecutionException _e) {
-                            return Optional.empty();
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                            throw new RuntimeException(e);
-                        }
-                    });
+            Optional<AppendEntriesResponse> response = ctx.callRemote(_defer -> {
+                try {
+                    return Optional.of(
+                            otherServers.get(server).appendEntries(request).get());
+                } catch (ExecutionException _e) {
+                    return Optional.empty();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    throw new RuntimeException(e);
+                }
+            });
             if (response.isEmpty()) {
                 return;
             }
@@ -224,7 +247,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
                 .setVotedFor(Optional.of(ctx.state().getPersistent().getMe()));
         LogEntryMetadata lastLogEntry = ctx.state().getPersistent().lastLogEntry();
 
-        return ctx.callStateful(defer -> {
+        return ctx.callRemote(defer -> {
             RequestVoteRequest request = RequestVoteRequest.builder()
                     .candidateId(me)
                     .term(electionTerm)
@@ -283,7 +306,8 @@ public final class RaftResource implements RaftService, BackgroundTask {
 
         int toSkip;
         List<LogEntry> overlapping = ourLog.subList(prevLogIndex, ourLog.size());
-        for (toSkip = 0; toSkip < request.getEntries().size() && toSkip < overlapping.size(); toSkip++) {
+        int max = Math.min(request.getEntries().size(), overlapping.size());
+        for (toSkip = 0; toSkip < max; toSkip++) {
             if (!request.getEntries().get(toSkip).equals(overlapping.get(toSkip))) {
                 overlapping.subList(toSkip, overlapping.size()).clear();
                 break;

@@ -106,10 +106,13 @@ public interface ServerState {
         while (getVolatile().getCommitIndex().get()
                 > getVolatile().getLastApplied().get()) {
             getVolatile().setLastApplied(LogIndexes.inc(getVolatile().getLastApplied()));
+            LogIndex lastApplied = getVolatile().getLastApplied();
             getStateMachine()
-                    .apply(getPersistent()
-                            .getLog()
-                            .get(LogIndexes.listIndex(getVolatile().getLastApplied())));
+                    .apply(
+                            lastApplied,
+                            getPersistent()
+                                    .getLog()
+                                    .get(LogIndexes.listIndex(getVolatile().getLastApplied())));
         }
     }
 }

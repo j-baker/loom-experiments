@@ -6,6 +6,8 @@ package io.jbaker.loom.raft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import io.jbaker.loom.raft.simulation.DelayDistribution;
+import io.jbaker.loom.raft.simulation.Simulation;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.concurrent.ExecutorService;
@@ -20,7 +22,7 @@ public class SimulationTest {
     @Test
     void testExecutor() {
         Duration delay = Duration.ofMillis(10);
-        ExecutorService executor = simulation.newExecutor(TimeDistribution.constant(delay));
+        ExecutorService executor = simulation.newExecutor(DelayDistribution.constant(delay));
         Instant now = simulation.clock().instant();
         Future<?> future = executor.submit(() -> {});
         simulation.runUntilComplete(future);
@@ -30,7 +32,7 @@ public class SimulationTest {
     @Test
     void testScheduling() {
         Duration delay = Duration.ofMillis(10);
-        ScheduledExecutorService executor = simulation.newScheduledExecutor(TimeDistribution.constant(Duration.ZERO));
+        ScheduledExecutorService executor = simulation.newScheduledExecutor(DelayDistribution.constant(Duration.ZERO));
         Instant now = simulation.clock().instant();
         Future<?> future = executor.schedule(() -> {}, delay.toMillis(), TimeUnit.MILLISECONDS);
         simulation.runUntilComplete(future);

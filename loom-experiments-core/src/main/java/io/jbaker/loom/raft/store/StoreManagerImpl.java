@@ -68,15 +68,15 @@ public final class StoreManagerImpl implements StoreManager {
         }
 
         @Override
-        public void runStateful(Consumer<Defer> task) {
-            callStateful(t -> {
+        public void runRemote(Consumer<Defer> task) {
+            callRemote(t -> {
                 task.accept(t);
                 return null;
             });
         }
 
         @Override
-        public <R> R callStateful(Function<Defer, R> task) {
+        public <R> R callRemote(Function<Defer, R> task) {
             checkState(getState() == State.IN_TASK, "cannot reentrantly call run/callStateful");
             lock.unlock();
             boolean threw = false;
