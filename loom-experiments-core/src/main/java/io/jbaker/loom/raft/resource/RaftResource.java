@@ -81,7 +81,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
 
     private Duration progressLeadershipState(Instant now) {
         return store.call(ctx -> {
-            innerProgressLeadershipState(ctx, now);
+            progressLeadershipState(ctx, now);
             // possibly not right
             ctx.state().setLastUpdated(now);
 
@@ -93,7 +93,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
         });
     }
 
-    private boolean innerProgressLeadershipState(StoreManager.Ctx ctx, Instant now) {
+    private void progressLeadershipState(StoreManager.Ctx ctx, Instant now) {
         ctx.state().keepStateMachineUpToDate();
 
         if (ctx.state().getMode() == LeadershipMode.FOLLOWER
@@ -113,8 +113,6 @@ public final class RaftResource implements RaftService, BackgroundTask {
             sendNoOpUpdates(ctx);
             ensureFollowersUpToDate(ctx);
         }
-
-        return false;
     }
 
     private void sendNoOpUpdates(StoreManager.Ctx ctx) {
