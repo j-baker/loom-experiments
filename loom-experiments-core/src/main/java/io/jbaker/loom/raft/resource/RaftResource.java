@@ -171,6 +171,7 @@ public final class RaftResource implements RaftService, BackgroundTask {
         return executor.submit(() -> store.run(c -> ensureFollowerUpToDate(c, server)));
     }
 
+    @SuppressWarnings("CyclomaticComplexity")
     private void ensureFollowerUpToDate(StoreManager.Ctx ctx, ServerId server) {
         ServerState state = ctx.state();
         while (true) {

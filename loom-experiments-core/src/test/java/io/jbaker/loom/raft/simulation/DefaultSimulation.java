@@ -88,7 +88,6 @@ final class DefaultSimulation implements Simulation {
 
     @Override
     public ExecutorService newExecutor(DelayDistribution delayDistribution) {
-        // return Executors.newCachedThreadPool(newThreadFactory(delayDistribution));
         return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution, random);
     }
 
@@ -115,7 +114,6 @@ final class DefaultSimulation implements Simulation {
 
     @Override
     public ScheduledExecutorService newScheduledExecutor(DelayDistribution delayDistribution) {
-        // return Executors.newScheduledThreadPool(4, newThreadFactory(timeDistribution));
         return new SimulatedExecutor(clock, this::scheduleNewTaskInVThread, delayDistribution, random);
     }
 

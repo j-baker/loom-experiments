@@ -6,7 +6,6 @@ package io.jbaker.loom.raft;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import com.codahale.metrics.Meter;
 import com.google.common.util.concurrent.MoreExecutors;
 import com.palantir.conjure.java.lib.Bytes;
 import com.palantir.logsafe.Preconditions;
@@ -48,8 +47,6 @@ import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
@@ -59,6 +56,7 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import org.assertj.core.data.Percentage;
 import org.junit.jupiter.api.Test;
 
 public class BasicRaftTest {
@@ -77,61 +75,48 @@ public class BasicRaftTest {
 
     @Test
     void test() throws InterruptedException {
-        Meter meter = new Meter();
-        ExecutorService executorService = Executors.newFixedThreadPool(1);
-        for (int thread = 0; thread < 32; thread++) {
-            executorService.submit(() -> {
-                Simulation simulation = Simulation.create(0);
-                CorrectnessValidator correctnessValidator = new CorrectnessValidator();
-                List<InitializedServer> servers = createServers(correctnessValidator, simulation);
-                simulation.advanceTime(Duration.ofMillis(60000));
-                long last = System.currentTimeMillis();
-                long start = System.currentTimeMillis();
-                int successCount = 0;
-                for (int i = 0; i < 100_000_000; i++) {
-                    while (!servers.stream()
-                            .anyMatch(server -> server.isLeader().isPresent())) {
-                        simulation.advanceTime(Duration.ofMillis(10));
-                    }
-                    if (i % 10000 == 0) {
-                        correctnessValidator.validateLogMatchingProperty(
-                                servers.stream().map(InitializedServer::store).toList());
-                        correctnessValidator.ensureNoBadnessFound();
-                        meter.mark(10_000);
-                        long now = System.currentTimeMillis();
-                        System.out.println((now - start) + " " + (now - last) + " " + i + " "
-                                + simulation.clock().instant() + " " + simulation.getTaskCount());
-                        last = now;
-                    }
-                    ApplyCommandRequest request = ApplyCommandRequest.of(
-                            Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
-                    boolean roundSuccess;
-                    try {
-                        roundSuccess = simulation
-                                .runUntilComplete(servers.stream()
-                                        .filter(server -> server.isLeader().isPresent())
-                                        .max(Comparator.comparingInt(server ->
-                                                server.isLeader().get().get()))
-                                        .orElseThrow()
-                                        .client()
-                                        .applyCommand(request))
-                                .getApplied();
-                    } catch (RuntimeException _e) {
-                        roundSuccess = false;
-                        simulation.advanceTime(Duration.ofMinutes(1));
-                    }
-                    successCount += roundSuccess ? 1 : 0;
-                }
-                simulation.advanceTime(Duration.ofMillis(100));
-                assertThat(successCount).isEqualTo(100);
-            });
+        Simulation simulation = Simulation.create(0);
+        CorrectnessValidator correctnessValidator = new CorrectnessValidator();
+        List<InitializedServer> servers = createServers(correctnessValidator, simulation);
+        simulation.advanceTime(Duration.ofMillis(60000));
+        long last = System.currentTimeMillis();
+        long start = System.currentTimeMillis();
+        int successCount = 0;
+        int numRounds = 100_000;
+        for (int i = 0; i < 100_000; i++) {
+            while (!servers.stream()
+                    .anyMatch(server -> server.isLeader().isPresent())) {
+                simulation.advanceTime(Duration.ofMillis(10));
+            }
+            if (i % 10000 == 0) {
+                correctnessValidator.validateLogMatchingProperty(
+                        servers.stream().map(InitializedServer::store).toList());
+                correctnessValidator.ensureNoBadnessFound();
+                long now = System.currentTimeMillis();
+                System.out.println((now - start) + " " + (now - last) + " " + i + " "
+                        + simulation.clock().instant() + " " + simulation.getTaskCount());
+                last = now;
+            }
+            ApplyCommandRequest request = ApplyCommandRequest.of(
+                    Command.of(Bytes.from(Integer.toString(i).getBytes(StandardCharsets.UTF_8))));
+            boolean roundSuccess;
+            try {
+                roundSuccess = simulation
+                        .runUntilComplete(servers.stream()
+                                .filter(server -> server.isLeader().isPresent())
+                                .max(Comparator.comparingInt(server ->
+                                        server.isLeader().get().get()))
+                                .orElseThrow()
+                                .client()
+                                .applyCommand(request))
+                        .getApplied();
+            } catch (RuntimeException _e) {
+                roundSuccess = false;
+                simulation.advanceTime(Duration.ofMinutes(1));
+            }
+            successCount += roundSuccess ? 1 : 0;
         }
-        while (true) {
-            Thread.sleep(Duration.ofSeconds(5));
-            System.out.printf(
-                    "count: %d - 1 min rate: %f - mean rate: %f%n",
-                    meter.getCount(), meter.getOneMinuteRate(), meter.getMeanRate());
-        }
+        assertThat(successCount).isCloseTo(numRounds, Percentage.withPercentage(5));
     }
 
     private static final class BackgroundTaskRunner implements BackgroundTask.Executor {
