@@ -12,8 +12,7 @@ import java.util.concurrent.Executor;
  *
  * Project Loom supports a custom scheduler. It's a clear part of the project, but was removed from the API for the
  * first preview release <a href="https://github.com/openjdk/loom/commit/cad26ce74c98e28854f02106117fe03741f69ba0">here</a>.
- * The effect of this is that the virtual threads all run in the same executor. This PR makes this settable, and
- * obviously requires module overrides.
+ * The effect of this is that the virtual threads all run in the same executor.
  */
 public final class HackVirtualThreads {
     private HackVirtualThreads() {}
