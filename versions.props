@@ -3,6 +3,7 @@ com.palantir.conjure:* = 4.29.0
 com.palantir.conjure.java:* = 6.42.0
 com.palantir.dialogue:* = 3.52.0
 org.immutables:value = 2.9.0
+org.openjdk.jmh:* = 1.35
 
 org.junit.jupiter:* = 5.8.2
 org.assertj:* = 3.22.0

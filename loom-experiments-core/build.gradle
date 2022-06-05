@@ -1,3 +1,8 @@
+sourceSets {
+  jmh
+}
+
+
 dependencies {
   implementation project(':loom-experiments-api:loom-experiments-api-dialogue')
   implementation project(':loom-experiments-api:loom-experiments-api-undertow')
@@ -6,6 +11,7 @@ dependencies {
   implementation 'com.palantir.conjure.java:conjure-undertow-annotations'
   implementation 'com.palantir.dialogue:dialogue-annotations'
   implementation 'com.palantir.safe-logging:logger'
+  implementation 'org.openjdk.jmh:jmh-core'
 
   compileOnly 'org.immutables:value::annotations'
 
@@ -14,16 +20,17 @@ dependencies {
   annotationProcessor 'com.palantir.conjure.java:conjure-undertow-processor'
   annotationProcessor 'com.palantir.dialogue:dialogue-annotations'
   annotationProcessor 'org.immutables:value'
+  testAnnotationProcessor 'org.openjdk.jmh:jmh-generator-annprocess'
 }
 
 
 tasks.withType(JavaCompile) {
-  options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
+  options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent", "--add-modules", "jdk.incubator.vector"]
 }
 tasks.withType(Test) {
   jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent",
-  "-Xms96g", "-Xmx96g","-XX:+UseParallelGC", "-XX:FlightRecorderOptions=stackdepth=200", "-XX:NewSize=80g", "-XX:MaxNewSize=80g"]//"-agentpath:/home/james/Downloads/YourKit-JavaProfiler-2022.3/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,probe_disable=*,_no_java_version_check"]
+  "-Xms16g", "-Xmx16g","-XX:+UseParallelGC", "-XX:FlightRecorderOptions=stackdepth=200", "--add-modules", "jdk.incubator.vector", "-Djdk.incubator.vector.VECTOR_ACCESS_OOB_CHECK=0"]//"-agentpath:/home/james/Downloads/YourKit-JavaProfiler-2022.3/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,probe_disable=*,_no_java_version_check"]
 }
 tasks.withType(JavaExec) {
-  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent"]
+  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent", "--add-modules", "jdk.incubator.vector"]
 }
