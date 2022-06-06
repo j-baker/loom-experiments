@@ -88,7 +88,7 @@ public class SortBenchmark {
         IntVectorizedQuickSort.doBetterPartition(toSort, 0, 0, toSort.length);
     }
 
-    //@Benchmark
+    @Benchmark
     @OperationsPerInvocation(1_000_000)
     public final int[] simpleSort() {
         IntVectorizedQuickSort.quicksort(toSort, 0, toSort.length);
@@ -102,7 +102,7 @@ public class SortBenchmark {
         return toSort;
     }
 
-    @Benchmark
+    //@Benchmark
     @OperationsPerInvocation(1_000_000)
     public final int[] jdkSort() {
         Arrays.sort(toSort);
