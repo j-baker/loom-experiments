@@ -16,6 +16,8 @@
 
 package io.jbaker.sort;
 
+import com.google.common.annotations.VisibleForTesting;
+import com.palantir.logsafe.exceptions.SafeIllegalStateException;
 import java.util.stream.IntStream;
 import jdk.incubator.vector.IntVector;
 import jdk.incubator.vector.VectorMask;
@@ -25,11 +27,18 @@ import jdk.incubator.vector.VectorSpecies;
 public class IntVectorizedQuickSort {
     private static final VectorSpecies<Integer> SPECIES = IntVector.SPECIES_PREFERRED;
 
+    private static final boolean USE_SORT_16 = IntVector.SPECIES_PREFERRED == IntVector.SPECIES_512;
+
     private IntVectorizedQuickSort() {}
 
     public static void quicksort(int[] array, int from, int to) {
         int size = to - from;
         if (size <= 1) {
+            return;
+        } else if (USE_SORT_16 && size <= 16) {
+            IntSortingNetwork.sort16(array, from, to);
+        } else if (size <= 8) {
+            IntSortingNetwork.sort8(array, from, to);
             return;
         }
         int pivot = partition(array, from, to);
@@ -43,94 +52,112 @@ public class IntVectorizedQuickSort {
         }
 
         int pivot = array[to - 1];
-        int crossover = doPartition(array, pivot, from, to - 1);
+        int crossover = doBetterPartition(array, pivot, from, to - 1);
         int temp = array[crossover];
         array[to - 1] = temp;
         array[crossover] = pivot;
         return crossover;
     }
 
-    @SuppressWarnings("CyclomaticComplexity")
-    public static int doPartition(
-            int[] array, int pivot, int from, int to) {
-        int lowerPointer = from;
-        int upperPointer = to;
+    @VisibleForTesting
+    static int doBetterPartition(int[] array, int pivot, int from, int to) {
+        int size = to - from;
 
-        if (to - from == SPECIES.length()) {
-            return doVectorSizePartition(array, pivot, from);
+        int index = from;
+        int upperBound = from + SPECIES.loopBound(size);
+        int manualPivotStartingPoint = upperBound;
+
+        if (index + SPECIES.length() >= upperBound) {
+            return doFallbackPartition(array, pivot, from, to);
         }
 
-        while (true) {
-            int innerUpperPointer = upperPointer - SPECIES.length();
-            if (lowerPointer + SPECIES.length() >= innerUpperPointer) { // >=?
-                break;
+        IntVector cachedVector;
+        int cachedNumTrues;
+        cachedVector = IntVector.fromArray(SPECIES, array, index);
+        VectorMask<Integer> cachedMask = cachedVector.lt(pivot);
+        cachedVector = cachedVector.rearrange(IntVectorizedQuickSort.compress(cachedMask));
+        cachedNumTrues = cachedMask.trueCount();
+        boolean initialize = false;
+        while (index + SPECIES.length() < upperBound) {
+            if (initialize) {
+                initialize = false;
+                cachedVector = IntVector.fromArray(SPECIES, array, index);
+                cachedMask = cachedVector.lt(pivot);
+                cachedVector = cachedVector.rearrange(IntVectorizedQuickSort.compress(cachedMask));
+                cachedNumTrues = cachedMask.trueCount();
             }
 
-            IntVector lowerCandidates = IntVector.fromArray(SPECIES, array, lowerPointer);
-            IntVector upperCandidates = IntVector.fromArray(SPECIES, array, innerUpperPointer);
+            int index2 = index + SPECIES.length();
 
-            VectorMask<Integer> lowerMatching = lowerCandidates.lt(pivot);
-            VectorMask<Integer> upperMatching = upperCandidates.lt(pivot);
+            IntVector vector2 = IntVector.fromArray(SPECIES, array, index2);
+            VectorMask<Integer> mask2 = vector2.lt(pivot);
+            int numTrues2 = mask2.trueCount();
 
-            int lowerTrueCount = lowerMatching.trueCount();
-            int upperTrueCount = upperMatching.trueCount();
-            if (lowerTrueCount == SPECIES.length() || upperTrueCount == 0) {
-                // array already properly pivoted on at least one side
-                if (lowerTrueCount == SPECIES.length()) {
-                    lowerPointer += SPECIES.length();
-                }
-                if (upperTrueCount == 0) {
-                    upperPointer -= SPECIES.length();
-                }
-            } else if (lowerTrueCount == 0 || upperTrueCount == SPECIES.length()) {
-                lowerCandidates.intoArray(array, innerUpperPointer);
-                upperCandidates.intoArray(array, lowerPointer);
-                if (lowerTrueCount == 0) {
-                    upperPointer -= SPECIES.length();
-                }
-                if (upperTrueCount == SPECIES.length()) {
-                    lowerPointer += SPECIES.length();
-                }
-            } else if (lowerTrueCount + upperTrueCount > SPECIES.length()) {
-                // overflow on lower half
-                int elementsFromUpper = SPECIES.length() - lowerTrueCount;
+            IntVector rearranged2 = vector2.rearrange(IntVectorizedQuickSort.compress(mask2));
 
-                IntVector lowerShuffled = lowerCandidates.rearrange(compress(lowerMatching));
-                IntVector upperShuffled = upperCandidates.rearrange(compress(upperMatching));
+            VectorMask<Integer> mask = IntVectorizedQuickSort.lowerOverflowMask(cachedNumTrues);
+            IntVector rotated = rearranged2.rearrange(IntVectorizedQuickSort.rotateRight(cachedNumTrues));
 
-                VectorMask<Integer> mask = lowerOverflowMasks[lowerTrueCount];
+            IntVector merged1 = cachedVector.blend(rotated, mask);
+            IntVector merged2 = rotated.blend(cachedVector, mask);
 
-                IntVector rotated = upperShuffled.rearrange(rotate(upperTrueCount));
-                lowerShuffled.blend(rotated, mask).intoArray(array, lowerPointer);
-                rotated.blend(lowerShuffled, mask).intoArray(array, innerUpperPointer);
-
-                lowerPointer += SPECIES.length();
-                upperPointer -= elementsFromUpper;
+            int totalTrues = cachedNumTrues + numTrues2;
+            if (totalTrues == SPECIES.length()) {
+                merged1.intoArray(array, index);
+                upperBound -= SPECIES.length();
+                IntVector newData = IntVector.fromArray(SPECIES, array, upperBound);
+                newData.intoArray(array, index2);
+                merged2.intoArray(array, upperBound);
+                index += SPECIES.length();
+                initialize = true;
+            } else if (totalTrues < SPECIES.length()) {
+                cachedVector = merged1;
+                cachedNumTrues = totalTrues;
+                upperBound -= SPECIES.length();
+                IntVector newData = IntVector.fromArray(SPECIES, array, upperBound);
+                newData.intoArray(array, index2);
+                merged2.intoArray(array, upperBound);
             } else {
-                // overflow on upper half, symmetric to other overflow case
-                IntVector lowerShuffled = lowerCandidates.rearrange(compress(lowerMatching));
-                IntVector upperShuffled = upperCandidates.rearrange(compress(upperMatching));
-
-                VectorMask<Integer> mask = upperOverflowMasks[upperTrueCount];
-                IntVector rotated = lowerShuffled.rearrange(rotate(lowerTrueCount));
-                upperShuffled.blend(rotated, mask).intoArray(array, innerUpperPointer);
-                rotated.blend(upperShuffled, mask).intoArray(array, lowerPointer);
-
-                lowerPointer += upperTrueCount;
-                upperPointer -= SPECIES.length();
+                cachedVector = merged2;
+                cachedNumTrues = totalTrues - SPECIES.length();
+                merged1.intoArray(array, index);
+                index += SPECIES.length();
             }
         }
-        return doFallbackPartition(array, pivot, lowerPointer, upperPointer);
+
+        // at this point, we have a setup that looks like the following (vector chunks)
+        // LLLLLLLLLLLL??HHHHHHHH? where L is lower, H is higher, ? is unknown
+        // The two ranges we care about are the chunk between our lower and higher segments. Because we demand 2 vectors
+        // buffer space, we might have an unprocessed vectors in the middle, and one of these may only presently
+        // be held in a vector.
+        // The good news is that this operation is cheap.
+        int difference = upperBound - index;
+        if (difference == SPECIES.length()) {
+            if (initialize) {
+                cachedVector = IntVector.fromArray(SPECIES, array, index);
+                cachedMask = cachedVector.lt(pivot);
+                cachedVector = cachedVector.rearrange(IntVectorizedQuickSort.compress(cachedMask));
+                cachedNumTrues = cachedMask.trueCount();
+            }
+            cachedVector.intoArray(array, index);
+            index += cachedNumTrues;
+        } else if (difference != 0) {
+            throw new SafeIllegalStateException("unexpected");
+        }
+
+        for (int i = manualPivotStartingPoint; i < to; i++) {
+            int temp = array[i];
+            if (temp < pivot) {
+                array[i] = array[index];
+                array[index++] = temp;
+            }
+        }
+
+        return index;
     }
 
-    private static int doVectorSizePartition(int[] array, int pivot, int from) {
-        IntVector vector = IntVector.fromArray(SPECIES, array, from);
-        VectorMask<Integer> mask = vector.lt(pivot);
-        vector.rearrange(compress(mask)).intoArray(array, from);
-        return from + mask.trueCount();
-    }
-
-    private static int doFallbackPartition(int[] array, int pivot, int lowerPointerArg, int upperPointerArg) {
+    @VisibleForTesting
+    static int doFallbackPartition(int[] array, int pivot, int lowerPointerArg, int upperPointerArg) {
         int lowerPointer = lowerPointerArg;
         int upperPointer = upperPointerArg;
         while (lowerPointer < upperPointer) {
@@ -155,44 +182,69 @@ public class IntVectorizedQuickSort {
     }
 
     @SuppressWarnings("unchecked")
-    private static final VectorMask<Integer>[] lowerOverflowMasks = IntStream.range(0, SPECIES.length())
+    @VisibleForTesting
+    static VectorMask<Integer> lowerOverflowMask(int index) {
+        // lowerOverflowMasks[index];
+        return VectorMask.fromArray(SPECIES, overflow, SPECIES.length() - index);
+    }
+
+    @SuppressWarnings("unchecked")
+    private static final VectorMask<Integer>[] lowerOverflowMasks = IntStream.range(0, SPECIES.length() + 1)
+            .map(lowerTrueCount -> lowerTrueCount % SPECIES.length())
             .mapToObj(lowerTrueCount -> {
                 int elementsFromUpper = SPECIES.length() - lowerTrueCount;
                 return VectorMask.fromLong(SPECIES, ((1L << elementsFromUpper) - 1 << lowerTrueCount));
             }).toArray(VectorMask[]::new);
 
-    @SuppressWarnings("unchecked")
-    private static final VectorMask<Integer>[] upperOverflowMasks = IntStream.range(0, SPECIES.length())
-            .mapToObj(upperTrueCount -> VectorMask.fromLong(SPECIES, (1L << upperTrueCount) - 1))
-            .toArray(VectorMask[]::new);
+    private static final boolean[] overflow = upperOverflowArray();
+
+    private static boolean[] upperOverflowArray() {
+        boolean[] result = new boolean[SPECIES.length() * 2];
+        for (int i = SPECIES.length(); i < result.length; i++) {
+            result[i] = true;
+        }
+        return result;
+    }
 
     @SuppressWarnings("unchecked")
     private static final VectorShuffle<Integer>[] compressions = IntStream.range(0, 1 << SPECIES.length())
             .mapToObj(index -> shuffle(index))
             .toArray(VectorShuffle[]::new);
 
-    // takes a mask like 1, 0, 1, 0 and returns a shuffle like 0, 2, 1, 3
-    private static VectorShuffle<Integer> compress(VectorMask<Integer> mask) {
+    @VisibleForTesting
+    static VectorShuffle<Integer> compress(VectorMask<Integer> mask) {
         return compressions[(int) mask.toLong()];
     }
 
     @SuppressWarnings("unchecked")
-    private static final VectorShuffle<Integer>[] rotations = IntStream.range(0, SPECIES.length())
-            .mapToObj(index -> VectorShuffle.iota(SPECIES, index, 1, true))
-            .toArray(VectorShuffle[]::new);
+    private static final VectorShuffle<Integer>[] rotations = rotationsArray();
 
-    private static VectorShuffle<Integer> rotate(int by) {
+    private static VectorShuffle<Integer>[] rotationsArray() {
+        VectorShuffle<Integer>[] r = IntStream.range(0, SPECIES.length() + 1)
+                .mapToObj(index -> VectorShuffle.iota(SPECIES, index % SPECIES.length(), 1, true))
+                .toArray(VectorShuffle[]::new);
+        for (int i = 0; i < r.length / 2; i++) {
+            VectorShuffle<Integer> tmp = r[i];
+            r[i] = r[r.length - 1 - i];
+            r[r.length - 1 - i] = tmp;
+        }
+        return r;
+    }
+
+    static VectorShuffle<Integer> rotateRight(int by) {
         return rotations[by];
     }
 
     private static VectorShuffle<Integer> shuffle(int maskArg) {
+        int numTrues = VectorMask.fromLong(SPECIES, maskArg).trueCount();
+
         int mask = maskArg;
         int[] ret = new int[SPECIES.length()];
-        int unmatchedIndex = ret.length - 1;
+        int unmatchedIndex = numTrues;
         int matchedIndex = 0;
         for (int i = 0; i < SPECIES.length(); i++) {
             if ((mask & 1) == 0) {
-                ret[unmatchedIndex--] = i;
+                ret[unmatchedIndex++] = i;
             } else {
                 ret[matchedIndex++] = i;
             }

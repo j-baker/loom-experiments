@@ -29,6 +29,12 @@ import org.junit.jupiter.api.Test;
 public class IntVectorizedQuickSortTest {
 
     @Test
+    void testNewPivot() throws InterruptedException {
+        int[] pivotArray = new int[] { 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0};
+        IntVectorizedQuickSort.doBetterPartition(pivotArray, 8, 0, pivotArray.length);
+    }
+
+    @Test
     void testPivot() {
         int runCount = 10;
         List<int[]> toSort = IntStream.range(0, runCount)
@@ -54,8 +60,8 @@ public class IntVectorizedQuickSortTest {
 
     @Test
     void testCorrectness() {
-        for (int i = 0; i < 1; i++) {
-            int count = 1000000;
+        for (int i = 1000000; i <= 1000000; i++) {
+            int count = i;
             int[] expected = randomDoubles(count);
             int[] actual = randomDoubles(count);
             Arrays.sort(expected);
