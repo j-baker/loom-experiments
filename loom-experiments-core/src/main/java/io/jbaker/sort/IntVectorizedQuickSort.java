@@ -25,7 +25,7 @@ import jdk.incubator.vector.VectorShuffle;
 import jdk.incubator.vector.VectorSpecies;
 
 public class IntVectorizedQuickSort {
-    private static final VectorSpecies<Integer> SPECIES = IntVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Integer> SPECIES = IntVector.SPECIES_256;
 
     private static final boolean USE_SORT_16 = IntVector.SPECIES_PREFERRED == IntVector.SPECIES_512;
 
