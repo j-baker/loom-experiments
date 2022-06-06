@@ -35,8 +35,8 @@ public class IntVectorizedQuickSort {
         int size = to - from;
         if (size <= 1) {
             return;
-        } else if (USE_SORT_16 && size <= 16) {
-            IntSortingNetwork.sort16(array, from, to);
+//        } else if (USE_SORT_16 && size <= 16) {
+//            IntSortingNetwork.sort16(array, from, to);
         } else if (size <= 8) {
             IntSortingNetwork.sort8(array, from, to);
             return;
