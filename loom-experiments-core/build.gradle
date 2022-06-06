@@ -1,7 +1,4 @@
-sourceSets {
-  jmh
-}
-
+apply plugin: 'application'
 
 dependencies {
   implementation project(':loom-experiments-api:loom-experiments-api-dialogue')
@@ -24,13 +21,17 @@ dependencies {
 }
 
 tasks.withType(JavaCompile) {
-  options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent", "--add-modules", "jdk.incubator.vector"]
+  options.compilerArgs += ["--enable-preview", "--add-modules", "jdk.incubator.vector"]
 }
 
 tasks.withType(Test) {
-  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent",
+  jvmArgs += ["--enable-preview",
   "-Xms16g", "-Xmx16g","-XX:+UseParallelGC", "-XX:FlightRecorderOptions=stackdepth=200", "--add-modules", "jdk.incubator.vector", "-Djdk.incubator.vector.VECTOR_ACCESS_OOB_CHECK=0"]//"-agentpath:/home/james/Downloads/YourKit-JavaProfiler-2022.3/bin/linux-x86-64/libyjpagent.so=disablestacktelemetry,exceptions=disable,probe_disable=*,_no_java_version_check"]
 }
 tasks.withType(JavaExec) {
-  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.concurrent", "--add-modules", "jdk.incubator.vector"]
+  jvmArgs += ["--enable-preview", "--add-modules", "jdk.incubator.vector"]
+}
+
+application {
+  mainClass = 'io.jbaker.sort.SortBenchmark'
 }

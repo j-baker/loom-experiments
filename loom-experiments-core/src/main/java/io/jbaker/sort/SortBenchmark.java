@@ -34,8 +34,6 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
-import org.openjdk.jmh.profile.GCProfiler;
-import org.openjdk.jmh.profile.LinuxPerfNormProfiler;
 import org.openjdk.jmh.runner.Runner;
 import org.openjdk.jmh.runner.RunnerException;
 import org.openjdk.jmh.runner.options.Options;
@@ -114,9 +112,9 @@ public class SortBenchmark {
     public static void main(String[] args) throws RunnerException {
         Options opt = new OptionsBuilder()
                 .include(".*" + SortBenchmark.class.getSimpleName() + ".*")
-                .addProfiler(GCProfiler.class)
+            //    .addProfiler(GCProfiler.class)
 //                .addProfiler(LinuxPerfProfiler.class)
-                .addProfiler(LinuxPerfNormProfiler.class)
+           //     .addProfiler(LinuxPerfNormProfiler.class)
  //              .addProfiler(JavaFlightRecorderProfiler.class)
      //           .addProfiler(LinuxPerfAsmProfiler.class)
                 .build();

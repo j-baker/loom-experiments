@@ -26,8 +26,8 @@ apply plugin: "org.jetbrains.gradle.plugin.idea-ext"
 
 
 javaVersions {
-    libraryTarget = 19
-    runtime = 19
+    libraryTarget = 18
+    runtime = 18
 }
 
 allprojects {
